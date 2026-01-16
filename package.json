@@ -1,0 +1,30 @@
+{
+  "name": "sc3099-be",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/Ironite01/sc3099-be#readme",
+  "bugs": {
+    "url": "https://github.com/Ironite01/sc3099-be/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ironite01/sc3099-be.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "dependencies": {
+    "fastify": "^5.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.9",
+    "typescript": "^5.9.3"
+  }
+}
