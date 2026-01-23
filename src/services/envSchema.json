@@ -1,0 +1,32 @@
+{
+    "type": "object",
+    "required": [
+        "PORT",
+        "POSTGRES_USERNAME",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_URI",
+        "POSTGRES_DB"
+    ],
+    "properties": {
+        "PORT": {
+            "type": "string",
+            "default": 3000
+        },
+        "POSTGRES_USERNAME": {
+            "type": "string",
+            "default": "postgres"
+        },
+        "POSTGRES_PASSWORD": {
+            "type": "string",
+            "default": "postgres"
+        },
+        "POSTGRES_URI": {
+            "type": "string",
+            "default": "localhost"
+        },
+        "POSTGRES_DB": {
+            "type": "string",
+            "default": "capstone"
+        }
+    }
+}

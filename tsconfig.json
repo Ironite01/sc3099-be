@@ -9,6 +9,8 @@
     "module": "nodenext",
     "target": "es2017",
     "types": [],
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
     // For nodejs:
     // "lib": ["esnext"],
     // "types": ["node"],
