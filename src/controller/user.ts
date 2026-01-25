@@ -8,13 +8,12 @@ async function userController(fastify: FastifyInstance) {
     fastify.post(`${uri}/login`, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const { username, password: passwordClaim }: any = req.body;
-            // Just a sample query for now to test if db is working
-            const { rows } = await pgClient.query("SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'");
-            const user = await UserModel.authenticate(username, passwordClaim);
-            res.status(201).send({ ...user, ...rows });
+            const { email, password: passwordClaim }: any = req.body;
+            const user = await UserModel.authenticate(pgClient, email, passwordClaim);
+            res.status(200).send({ success: true, user });
         } catch (err: any) {
             console.error(err.message);
+            res.status(401).send({ success: false, error: err.message });
         } finally {
             pgClient.release();
         }

@@ -25,14 +25,46 @@ export function createUser(payload: any) {
     console.log("Creating user with hash = ", hash);
 }
 
-export async function authenticate(username: String, passwordClaim: string) {
-    // Below hash is value = "test"
-    const hashValue = "$2b$10$bpK6AUNVhwrIBBVS0AmVROQeHbjphYeYeyY4aUhMMqQrRbUK89yfG";
-    const match = await bcrypt.compare(passwordClaim, hashValue);
+export async function authenticate(pgClient: any, email: string, passwordClaim: string) {
+    // Query database for user by email
+    const { rows } = await pgClient.query(
+        'SELECT id, email, full_name, hashed_password, role, is_active, created_at, last_login_at FROM users WHERE email = $1',
+        [email]
+    );
+
+    // Check if user exists
+    if (rows.length === 0) {
+        throw new Error("User not found!");
+    }
+
+    const user = rows[0];
+
+    // Check if user account is active
+    if (!user.is_active) {
+        throw new Error("User account is inactive!");
+    }
+
+    // Compare provided password with stored hash
+    const match = await bcrypt.compare(passwordClaim, user.hashed_password);
 
     if (!match) {
         throw new Error("Password is incorrect!");
     }
 
-    return { id: 1, username: "Nelson" };
+    // Update last login timestamp
+    await pgClient.query(
+        'UPDATE users SET last_login_at = NOW() WHERE id = $1',
+        [user.id]
+    );
+
+    // Return user data without password
+    return {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        role: user.role,
+        isActive: user.is_active,
+        createdAt: user.created_at,
+        lastLoginAt: new Date()
+    };
 }
