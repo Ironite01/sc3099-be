@@ -10,6 +10,25 @@ async function userController(fastify: FastifyInstance) {
         try {
             const { email, password: passwordClaim }: any = req.body;
             const user = await UserModel.authenticate(pgClient, email, passwordClaim);
+
+            // Generate JWT token
+            const token = fastify.jwt.sign({
+                id: user.id,
+                email: user.email,
+                role: user.role
+            }, {
+                expiresIn: '7d' // Token expires in 7 days
+            });
+
+            // Set token in HTTP-only cookie
+            res.setCookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+                sameSite: 'strict',
+                path: '/',
+                maxAge: 7 * 24 * 60 * 60 // 7 days in seconds
+            });
+
             res.status(200).send({ success: true, user });
         } catch (err: any) {
             console.error(err.message);

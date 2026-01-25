@@ -5,7 +5,8 @@
         "POSTGRES_USERNAME",
         "POSTGRES_PASSWORD",
         "POSTGRES_URI",
-        "POSTGRES_DB"
+        "POSTGRES_DB",
+        "JWT_SECRET"
     ],
     "properties": {
         "PORT": {
@@ -27,6 +28,10 @@
         "POSTGRES_DB": {
             "type": "string",
             "default": "capstone"
+        },
+        "JWT_SECRET": {
+            "type": "string",
+            "default": "your-secret-key-change-this-in-production"
         }
     }
 }
