@@ -2,15 +2,23 @@ import * as bcrypt from 'bcrypt';
 
 const SALT_ROUNDS = 10;
 
-// Tentative specification
 export class User {
-    username!: string;
-    profilePicture?: any | undefined;
-    createdAt?: Date | undefined;
+    id!: string;
+    email!: string;
+    fullName!: string;
+    role!: string;
+    isActive!: boolean;
+    createdAt!: Date;
+    lastLoginAt: Date | undefined;
 
-    constructor(username: string, profilePicture?: any) {
-        this.username = username;
-        this.profilePicture = profilePicture || undefined;
+    constructor(id: string, email: string, fullName: string, role: string, isActive: boolean, createdAt: Date, lastLoginAt?: Date) {
+        this.id = id;
+        this.email = email;
+        this.fullName = fullName;
+        this.role = role;
+        this.isActive = isActive;
+        this.createdAt = createdAt;
+        this.lastLoginAt = lastLoginAt;
     }
 }
 
@@ -57,14 +65,14 @@ export async function authenticate(pgClient: any, email: string, passwordClaim: 
         [user.id]
     );
 
-    // Return user data without password
-    return {
-        id: user.id,
-        email: user.email,
-        fullName: user.full_name,
-        role: user.role,
-        isActive: user.is_active,
-        createdAt: user.created_at,
-        lastLoginAt: new Date()
-    };
+    // Return User class instance
+    return new User(
+        user.id,
+        user.email,
+        user.full_name,
+        user.role,
+        user.is_active,
+        user.created_at,
+        new Date()
+    );
 }
