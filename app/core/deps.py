@@ -19,12 +19,14 @@ def get_current_user(
 ) -> User:
     """Get current authenticated user from JWT token."""
     token = credentials.credentials
+    print(f"DEBUG: Received token: {token[:50] if token else 'None'}...")
     payload = decode_token(token)
+    print(f"DEBUG: Decoded payload: {payload}")
 
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials"
+            detail="Could not validate credentials - token decode failed"
         )
 
     user_id: str = payload.get("sub")
