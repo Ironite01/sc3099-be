@@ -1,0 +1,44 @@
+{
+  "name": "sc3099-be",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/Ironite01/sc3099-be#readme",
+  "bugs": {
+    "url": "https://github.com/Ironite01/sc3099-be/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ironite01/sc3099-be.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx -r tsconfig-paths/register src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/env": "^5.0.3",
+    "@fastify/formbody": "^8.0.2",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/postgres": "^6.0.2",
+    "bcrypt": "^6.0.0",
+    "fastify": "^5.7.0",
+    "fastify-plugin": "^5.1.0",
+    "pg": "^8.17.2"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^25.0.9",
+    "@types/pg": "^8.16.0",
+    "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
