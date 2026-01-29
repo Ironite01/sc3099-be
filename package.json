@@ -18,7 +18,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsx -r tsconfig-paths/register src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
   },
   "keywords": [],
   "dependencies": {
@@ -34,9 +35,14 @@
     "pg": "^8.17.2"
   },
   "devDependencies": {
+    "@jest/globals": "^30.2.0",
     "@types/bcrypt": "^6.0.0",
+    "@types/jest": "^29.5.12",
     "@types/node": "^25.0.9",
     "@types/pg": "^8.16.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
