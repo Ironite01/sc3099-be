@@ -36,7 +36,7 @@ export function createUser(payload: any) {
 export async function authenticate(pgClient: any, email: string, passwordClaim: string) {
     // Query database for user by email
     const { rows } = await pgClient.query(
-        'SELECT id, email, full_name, hashed_password, role, is_active, created_at, last_login_at FROM users WHERE email = $1',
+        'SELECT id, email, full_name, hashed_password, role, is_active, created_at, last_login_at FROM users WHERE email = $1 AND is_active = TRUE',
         [email]
     );
 
