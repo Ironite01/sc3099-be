@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { SessionStatus, VALID_SESSION_STATUSES } from '../enums.js';
 
 interface SessionCreateBody {
     course_id: string;
@@ -23,7 +24,7 @@ interface SessionCreateBody {
 interface SessionUpdateBody {
     name?: string;
     description?: string;
-    status?: 'scheduled' | 'active' | 'closed' | 'cancelled';
+    status?: SessionStatus;
     scheduled_start?: string;
     scheduled_end?: string;
     checkin_opens_at?: string;
@@ -365,9 +366,9 @@ async function sessionController(fastify: FastifyInstance) {
             const { id } = req.params;
             const { status } = req.body;
 
-            const validStatuses = ['scheduled', 'active', 'closed', 'cancelled'];
-            if (!validStatuses.includes(status)) {
-                res.status(400).send({ detail: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+
+            if (!VALID_SESSION_STATUSES.includes(status as SessionStatus)) {
+                res.status(400).send({ detail: `Invalid status. Must be one of: ${VALID_SESSION_STATUSES.join(', ')}` });
                 return;
             }
 
@@ -407,7 +408,7 @@ async function sessionController(fastify: FastifyInstance) {
                 return;
             }
 
-            if (checkResult.rows[0].status !== 'scheduled') {
+            if (checkResult.rows[0].status !== SessionStatus.SCHEDULED) {
                 res.status(400).send({ detail: 'Only scheduled sessions can be deleted. Use cancel for active/closed sessions.' });
                 return;
             }
