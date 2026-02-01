@@ -27,7 +27,7 @@ server
     .register(fastifyFormbody)
     .register(controller);
 
-server.listen({ port: 8000 }, (err: Error | null, address: string) => {
+server.listen({ port: 8000, host: '127.0.0.1' }, (err: Error | null, address: string) => {
     if (err) {
         console.error(err);
         process.exit(1);

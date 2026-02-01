@@ -224,6 +224,7 @@ async function courseController(fastify: FastifyInstance) {
         try {
             const { id } = req.params;
 
+            // Soft delete the course
             const result = await pgClient.query(
                 `UPDATE courses SET is_active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id`,
                 [id]
@@ -233,6 +234,14 @@ async function courseController(fastify: FastifyInstance) {
                 res.status(404).send({ detail: 'Course not found' });
                 return;
             }
+
+            // Cancel all scheduled/active sessions for this course
+            await pgClient.query(
+                `UPDATE sessions 
+                 SET status = 'cancelled', updated_at = NOW() 
+                 WHERE course_id = $1 AND status IN ('scheduled', 'active')`,
+                [id]
+            );
 
             res.status(204).send();
         } catch (err: any) {
