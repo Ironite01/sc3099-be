@@ -11,7 +11,19 @@
     "properties": {
         "PORT": {
             "type": "string",
+            "default": 8000
+        },
+        "FE_PORT": {
+            "type": "string",
             "default": 3000
+        },
+        "ML_PORT": {
+            "type": "string",
+            "default": 8001
+        },
+        "DASHBOARD_PROT": {
+            "type": "string",
+            "default": 8501
         },
         "POSTGRES_USERNAME": {
             "type": "string",

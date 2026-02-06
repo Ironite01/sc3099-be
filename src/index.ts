@@ -10,27 +10,29 @@ import pg from './services/pg.js';
 
 const server = fastify();
 
-server
-    .register(fastifyMultipart, {
-        limits: { fileSize: 50 * 1024 * 1024 }
-    })
-    .register(fastifyEnv, { schema: envSchema, dotenv: true })
-    .register(fastifyCookie)
-    .register(fastifyJwt, {
-        secret: process.env.JWT_SECRET || 'your-secret-key-change-this-in-production',
+try {
+    await server.register(fastifyEnv, { schema: envSchema, dotenv: true });
+    await server.register(fastifyJwt, {
+        secret: (server as any).config.JWT_SECRET!!,
         cookie: {
             cookieName: 'token',
             signed: false
         }
     })
-    .register(pg)
-    .register(fastifyFormbody)
-    .register(controller);
-
-server.listen({ port: 3000 }, (err: Error | null, address: string) => {
-    if (err) {
-        console.error(err);
-        process.exit(1);
-    }
-    console.log(`Server listening at ${address}`);
-});
+        .register(fastifyMultipart, {
+            limits: { fileSize: 50 * 1024 * 1024 }
+        })
+        .register(fastifyCookie)
+        .register(pg)
+        .register(fastifyFormbody)
+        .register(controller);
+    await server.listen({ port: (server as any).config.PORT!! }, (err: Error | null, address: string) => {
+        if (err) {
+            console.error(err);
+            process.exit(1);
+        }
+        console.log(`Server listening at ${address}`);
+    });
+} catch (e: any) {
+    console.error(e.message);
+}

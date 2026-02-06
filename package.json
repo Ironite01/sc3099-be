@@ -31,7 +31,8 @@
     "bcrypt": "^6.0.0",
     "fastify": "^5.7.0",
     "fastify-plugin": "^5.1.0",
-    "pg": "^8.17.2"
+    "pg": "^8.17.2",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
