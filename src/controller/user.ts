@@ -21,7 +21,7 @@ async function userController(fastify: FastifyInstance) {
             });
 
             // Set token in HTTP-only cookie
-            res.setCookie('token', token, {
+            res.setCookie('access_token', token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
                 sameSite: 'strict',
