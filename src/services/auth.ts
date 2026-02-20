@@ -3,39 +3,32 @@ import fastifyJwt from '@fastify/jwt';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { USER_ROLE_TYPES } from '../helpers/constants.js';
 
-async function auth(fastify: any) {
+function auth(fastify: any) {
     const secret = fastify.config.JWT_SECRET!!;
 
     fastify.register(fastifyJwt, {
         secret: secret,
         cookie: {
-            cookieName: 'token',
+            cookieName: 'access_token',
             signed: false
         }
     })
 
-    fastify.decorate("authenticate", async function (request: FastifyRequest, reply: FastifyReply) {
-        try {
-            await request.jwtVerify();
-        } catch (err) {
-            reply.send(err);
-        }
-    });
-
-    // Example usage on controller middleware : { preHandler: [fastify.auth_student] }
-    for (const v of Object.values(USER_ROLE_TYPES)) {
-        fastify.decorate(`auth_${v.toLowerCase()}`, async function (request: FastifyRequest, reply: FastifyReply) {
+    // Usage: { preHandler: [authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.TA])]}
+    fastify.decorate("authorize", (roles?: USER_ROLE_TYPES[]) =>
+        async function (request: FastifyRequest, reply: FastifyReply) {
             try {
                 await request.jwtVerify();
-                if ((request?.user as { role: string }).role) {
-                    if ((request.user as { role: string }).role !== v)
-                        throw new Error("Unauthorized!");
+                const userRole = (request.user as { role: string })?.role;
+
+                if (roles && (!userRole || !roles.includes(userRole as USER_ROLE_TYPES))) {
+                    return reply.status(403).send({ error: "Forbidden!" });
                 }
             } catch (err) {
-                reply.send(err);
+                return reply.status(401).send(err);
             }
-        });
-    }
+        }
+    );
 }
 
 export default fp(auth);

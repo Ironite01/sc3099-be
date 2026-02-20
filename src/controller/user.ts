@@ -1,9 +1,21 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import * as UserModel from '../model/user.js';
+import { USER_ROLE_TYPES } from '../helpers/constants.js';
 
 async function userController(fastify: FastifyInstance) {
     const uri = '/user';
+
+    fastify.get('/me', { preHandler: [(fastify as any).authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.INSTRUCTOR])] }, async (req: FastifyRequest, res: FastifyReply) => {
+        try {
+            if (req?.user) {
+                return res.status(200).send({ message: "User authenticated!", user: req.user });
+            }
+            return res.status(400).send({ message: "Currently not logged in..." });
+        } catch (e: any) {
+            res.send({ error: e.message });
+        }
+    });
 
     fastify.post(`${uri}/login`, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
