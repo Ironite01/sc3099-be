@@ -1,19 +1,27 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import * as UserModel from '../model/user.js';
-import { USER_ROLE_TYPES } from '../helpers/constants.js';
+import { ACCESS_TOKEN_TTL, BASE_URL, REFRESH_TOKEN_TTL } from '../helpers/constants.js';
 
 async function userController(fastify: FastifyInstance) {
-    const uri = '/user';
+    const uri = `${BASE_URL}/user`;
 
-    fastify.get('/me', { preHandler: [(fastify as any).authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.INSTRUCTOR])] }, async (req: FastifyRequest, res: FastifyReply) => {
+    fastify.get(`${uri}/me`, { preHandler: [(fastify as any).authorize()] }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
         try {
-            if (req?.user) {
-                return res.status(200).send({ message: "User authenticated!", user: req.user });
+            const userId = (req?.user as any).sub;
+            if (!userId) {
+                throw new Error("User not found!");
             }
-            return res.status(400).send({ message: "Currently not logged in..." });
+            const user = await UserModel.getUserById(pgClient, userId);
+            if (!user) {
+                throw new Error("User not found!");
+            }
+            res.status(200).send({ success: true, user });
         } catch (e: any) {
-            res.send({ error: e.message });
+            res.send({ success: false, message: e.message });
+        } finally {
+            pgClient.release();
         }
     });
 
@@ -23,28 +31,78 @@ async function userController(fastify: FastifyInstance) {
             const { email, password: passwordClaim }: any = req.body;
             const user = await UserModel.authenticate(pgClient, email, passwordClaim);
 
-            // Generate JWT token
-            const token = fastify.jwt.sign({
-                id: user.id,
-                email: user.email,
-                role: user.role
-            }, {
-                expiresIn: '7d' // Token expires in 7 days
-            });
+            const accessToken = fastify.jwt.sign(
+                { sub: user.id, email: user.email, role: user.role }, { expiresIn: ACCESS_TOKEN_TTL }
+            );
+            const refreshToken = fastify.jwt.sign(
+                { sub: user.id, type: 'refresh' }, { expiresIn: REFRESH_TOKEN_TTL }
+            );
 
-            // Set token in HTTP-only cookie
-            res.setCookie('access_token', token, {
+            res.setCookie('access_token', accessToken, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
                 sameSite: 'strict',
                 path: '/',
-                maxAge: 7 * 24 * 60 * 60 // 7 days in seconds
+                maxAge: ACCESS_TOKEN_TTL
+            });
+            res.setCookie('refresh_token', refreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                path: '/',
+                maxAge: REFRESH_TOKEN_TTL
             });
 
             res.status(200).send({ success: true, user });
         } catch (err: any) {
             console.error(err.message);
             res.status(401).send({ success: false, error: err.message });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.post(`${uri}/refresh`, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+
+            const { refresh_token }: any = req.body;
+            if (!refresh_token) {
+                throw new Error("Refresh token required");
+            }
+
+            const decoded: any = fastify.jwt.verify(refresh_token);
+            if (decoded.type !== 'refresh') {
+                throw new Error("Invalid refresh token");
+            }
+
+            const user = await UserModel.getUserById(pgClient, decoded.sub);
+
+            const accessToken = fastify.jwt.sign(
+                { sub: user.id, email: user.email, role: user.role },
+                { expiresIn: ACCESS_TOKEN_TTL }
+            );
+            const newRefreshToken = fastify.jwt.sign(
+                { sub: user.id, type: 'refresh' },
+                { expiresIn: REFRESH_TOKEN_TTL }
+            );
+
+            res.setCookie('access_token', accessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+                sameSite: 'strict',
+                path: '/',
+                maxAge: ACCESS_TOKEN_TTL
+            });
+            res.setCookie('refresh_token', newRefreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                path: '/',
+                maxAge: REFRESH_TOKEN_TTL
+            });
+        } catch (err: any) {
+            res.status(401).send({ message: err.message });
         } finally {
             pgClient.release();
         }
