@@ -3,8 +3,8 @@ import fp from 'fastify-plugin';
 import * as UserModel from '../model/user.js';
 import { ACCESS_TOKEN_TTL, BASE_URL, REFRESH_TOKEN_TTL } from '../helpers/constants.js';
 
-async function userController(fastify: FastifyInstance) {
-    const uri = `${BASE_URL}/user`;
+async function authController(fastify: FastifyInstance) {
+    const uri = `${BASE_URL}/auth`;
 
     fastify.get(`${uri}/me`, { preHandler: [(fastify as any).authorize()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
@@ -17,9 +17,12 @@ async function userController(fastify: FastifyInstance) {
             if (!user) {
                 throw new Error("User not found!");
             }
+            if (!user.isActive) {
+                return res.status(403).send({ success: false, message: "Forbidden" });
+            }
             res.status(200).send({ success: true, user });
         } catch (e: any) {
-            res.send({ success: false, message: e.message });
+            res.status(401).send({ success: false, message: e.message });
         } finally {
             pgClient.release();
         }
@@ -30,6 +33,10 @@ async function userController(fastify: FastifyInstance) {
         try {
             const { email, password: passwordClaim }: any = req.body;
             const user = await UserModel.authenticate(pgClient, email, passwordClaim);
+            // Check if user account is active
+            if (!user.isActive) {
+                return res.status(403).send({ success: false, message: "Forbidden" });
+            }
 
             const accessToken = fastify.jwt.sign(
                 { sub: user.id, email: user.email, role: user.role }, { expiresIn: ACCESS_TOKEN_TTL }
@@ -53,9 +60,13 @@ async function userController(fastify: FastifyInstance) {
                 maxAge: REFRESH_TOKEN_TTL
             });
 
-            res.status(200).send({ success: true, user });
+            res.status(200).send({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+                token_type: "bearer",
+                user
+            });
         } catch (err: any) {
-            console.error(err.message);
             res.status(401).send({ success: false, error: err.message });
         } finally {
             pgClient.release();
@@ -65,8 +76,7 @@ async function userController(fastify: FastifyInstance) {
     fastify.post(`${uri}/refresh`, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-
-            const { refresh_token }: any = req.body;
+            const refresh_token: any = req.cookies;
             if (!refresh_token) {
                 throw new Error("Refresh token required");
             }
@@ -77,6 +87,9 @@ async function userController(fastify: FastifyInstance) {
             }
 
             const user = await UserModel.getUserById(pgClient, decoded.sub);
+            if (!user.isActive) {
+                return res.status(403).send({ success: false, message: "Forbidden" });
+            }
 
             const accessToken = fastify.jwt.sign(
                 { sub: user.id, email: user.email, role: user.role },
@@ -101,6 +114,8 @@ async function userController(fastify: FastifyInstance) {
                 path: '/',
                 maxAge: REFRESH_TOKEN_TTL
             });
+
+            res.status(200).send({ refresh_token: newRefreshToken, access_token: accessToken, user });
         } catch (err: any) {
             res.status(401).send({ message: err.message });
         } finally {
@@ -128,4 +143,4 @@ async function userController(fastify: FastifyInstance) {
     });
 }
 
-export default fp(userController);
+export default fp(authController);

@@ -2,6 +2,9 @@
     "type": "object",
     "required": [
         "PORT",
+        "FE_PORT",
+        "ML_PORT",
+        "DASHBOARD_PORT",
         "POSTGRES_USERNAME",
         "POSTGRES_PASSWORD",
         "POSTGRES_URI",
@@ -11,7 +14,19 @@
     "properties": {
         "PORT": {
             "type": "string",
+            "default": 8000
+        },
+        "FE_PORT": {
+            "type": "string",
             "default": 3000
+        },
+        "ML_PORT": {
+            "type": "string",
+            "default": 8001
+        },
+        "DASHBOARD_PORT": {
+            "type": "string",
+            "default": 8501
         },
         "POSTGRES_USERNAME": {
             "type": "string",

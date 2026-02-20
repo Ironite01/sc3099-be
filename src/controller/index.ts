@@ -1,9 +1,9 @@
 import fp from 'fastify-plugin';
-import userController from './user.js';
+import authController from './auth.js';
 import type { FastifyInstance } from 'fastify';
 
 async function controller(fastify: FastifyInstance) {
-    fastify.register(userController);
+    fastify.register(authController);
 }
 
 export default fp(controller);

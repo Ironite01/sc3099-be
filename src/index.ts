@@ -7,6 +7,7 @@ import fastifyCookie from '@fastify/cookie';
 import envSchema from './services/envSchema.json' with { type: 'json' };
 import pg from './services/pg.js';
 import auth from './services/auth.js';
+import cors from './services/cors.js';
 
 const server = fastify();
 
@@ -20,6 +21,7 @@ try {
         .register(auth)
         .register(pg)
         .register(fastifyFormbody)
+        .register(cors)
         .register(controller);
 
     await server.listen({ port: (server as any).config.PORT!! }, (err: Error | null, address: string) => {

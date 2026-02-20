@@ -34,15 +34,24 @@ export class User {
     }
 }
 
-export async function getUserById(pgClient: any, id: number) {
+export async function getUserById(pgClient: any, id: string) {
     const { rows } = await pgClient.query(
-        'SELECT id, email, role FROM users WHERE id = $1 AND is_active = TRUE',
+        'SELECT id, email, full_name, role, is_active, created_at, last_login_at FROM users WHERE id = $1 AND is_active = TRUE',
         [id]
     );
     if (rows.length === 0) {
         throw new Error("User not found or inactive");
     }
-    return rows[0];
+    const user = rows[0];
+    return new User(
+        user.id,
+        user.email,
+        user.full_name,
+        user.role,
+        user.is_active,
+        user.created_at,
+        user.last_login_at
+    );;
 }
 
 export function createUser(payload: any) {
@@ -57,6 +66,8 @@ export function createUser(payload: any) {
 }
 
 export async function authenticate(pgClient: any, email: string, passwordClaim: string) {
+    // TODO: Transaction to select user AND update last_login_at
+
     // Query database for user by email
     const { rows } = await pgClient.query(
         'SELECT id, email, full_name, hashed_password, role, is_active, created_at, last_login_at FROM users WHERE email = $1 AND is_active = TRUE',
@@ -70,16 +81,10 @@ export async function authenticate(pgClient: any, email: string, passwordClaim: 
 
     const user = rows[0];
 
-    // Check if user account is active
-    if (!user.is_active) {
-        throw new Error("User account is inactive!");
-    }
-
     // Compare provided password with stored hash
     const match = await bcrypt.compare(passwordClaim, user.hashed_password);
-
     if (!match) {
-        throw new Error("Password is incorrect!");
+        throw new Error("User not found!");
     }
 
     // Update last login timestamp
