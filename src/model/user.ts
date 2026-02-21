@@ -1,38 +1,60 @@
 import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
-import { isEmailValid, isStrongPassword } from '../helpers/regex.js';
+import { isStrongPassword } from '../helpers/regex.js';
 import { v4 as uuidv4 } from 'uuid';
+import { BadRequestError, ForbiddenError, UnauthorizedError } from './error.js';
+import { SALT_ROUNDS } from '../helpers/constants.js';
 
-const SALT_ROUNDS = 10;
+export enum USER_ROLE_TYPES {
+    STUDENT = 'student',
+    ADMIN = 'admin',
+    INSTRUCTOR = 'instructor',
+    TA = 'ta'
+}
+export const USER_ROLE_HIERARCHY: Record<USER_ROLE_TYPES, number> = {
+    [USER_ROLE_TYPES.STUDENT]: 1,
+    [USER_ROLE_TYPES.TA]: 2,
+    [USER_ROLE_TYPES.INSTRUCTOR]: 3,
+    [USER_ROLE_TYPES.ADMIN]: 4
+};
 
-export default class User {
-    id!: string;
-    email!: string;
-    fullName!: string;
-    role!: string;
-    isActive!: boolean;
-    createdAt!: Date;
-    lastLoginAt: Date | undefined;
+export type User = {
+    id: string;
+    email: string;
+    full_name: string;
+    hashed_password: string;
+    role: string;
+    is_active: boolean;
+    created_at: Date;
+    last_login_at: Date | null;
+    camera_consent: boolean;
+    face_enrolled: boolean;
+    geolocation_consent: boolean;
+};
 
-    constructor(id: string, email: string, fullName: string, role: string, isActive: boolean, createdAt: Date, lastLoginAt?: Date) {
-        this.id = id;
-        this.email = email;
-        this.fullName = fullName;
-        this.role = role;
-        this.isActive = isActive;
-        this.createdAt = createdAt;
-        this.lastLoginAt = lastLoginAt;
-    }
+export const UserModel = {
+    getById: async function getById(pgClient: any, id: string) {
+        const { rows } = await pgClient.query(
+            'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled FROM users WHERE id = $1',
+            [id]
+        );
+        if (rows.rowCount === 0) {
+            throw new BadRequestError("User not found!");
+        }
+        const user: User = rows[0];
 
-    static async create(pgClient: PoolClient, payload: any) {
-        const { email, password, full_name, role, raw_face_data } = payload;
-
-        if (!isEmailValid(email)) {
-            throw new Error("Email is not valid!");
+        if (!user.is_active) {
+            throw new ForbiddenError("User account is inactive!");
         }
 
+        return user;
+    },
+    create: async function create(pgClient: PoolClient, payload: Partial<User> & { password: string, raw_face_data: string }) {
+        const { email, password, full_name, role, raw_face_data } = payload;
+
+        // Email validation is handled by ajv
         if (!isStrongPassword(password)) {
-            throw new Error("Password is not strong!");
+            throw new BadRequestError("Password is not strong!");
         }
 
         // TODO: Fetch the ML service
@@ -44,15 +66,19 @@ export default class User {
         const resDb = await pgClient.query(
             `INSERT INTO users (id, email, full_name, hashed_password, role, face_embedding_hash, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (email) DO NOTHING
             RETURNING id, email, full_name, role, is_active, created_at, last_login_at;`,
-            [uuidv4(), email, full_name, hashed_password, role.toLowerCase(), "blablabla", new Date(), new Date()]
+            [uuidv4(), email, full_name, hashed_password, role!.toLowerCase(), "blablabla", new Date(), new Date()]
         );
 
-        const r = resDb.rows[0];
-        return new User(r.id, r.email, r.full_name, r.role, r.is_active, r.created_at, r.last_login_at);
-    }
+        if (resDb.rowCount === 0) {
+            throw new BadRequestError("Email already exists!");
+        }
+        return resDb.rows[0] as User;
+    },
+    login: async function login(pgClient: PoolClient, email: string, passwordClaim: string) {
+        // TODO: Transaction to select user AND update last_login_at
 
-    static async authenticate(pgClient: PoolClient, email: string, passwordClaim: string) {
         // Query database for user by email
         const { rows } = await pgClient.query(
             'SELECT id, email, full_name, hashed_password, role, is_active, created_at, last_login_at FROM users WHERE email = $1',
@@ -61,21 +87,20 @@ export default class User {
 
         // Check if user exists
         if (rows.length === 0) {
-            throw new Error("User not found!");
+            throw new UnauthorizedError("Credentials are invalid!");
         }
 
-        const user = rows[0];
+        const user: User = rows[0];
 
         // Check if user account is active
         if (!user.is_active) {
-            throw new Error("User account is inactive!");
+            throw new ForbiddenError("User account is inactive!");
         }
 
         // Compare provided password with stored hash
         const match = await bcrypt.compare(passwordClaim, user.hashed_password);
-
         if (!match) {
-            throw new Error("Password is incorrect!");
+            throw new UnauthorizedError("Credentials are invalid!");
         }
 
         // Update last login timestamp
@@ -84,15 +109,6 @@ export default class User {
             [user.id]
         );
 
-        // Return User class instance
-        return new User(
-            user.id,
-            user.email,
-            user.full_name,
-            user.role,
-            user.is_active,
-            user.created_at,
-            new Date()
-        );
+        return user;
     }
 }
