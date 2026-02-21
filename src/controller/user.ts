@@ -29,7 +29,7 @@ async function userController(fastify: FastifyInstance) {
                 maxAge: 7 * 24 * 60 * 60 // 7 days in seconds
             });
 
-            res.status(200).send({ success: true, user });
+            res.status(200).send({ success: true, access_token: token, user });
         } catch (err: any) {
             console.error(err.message);
             res.status(401).send({ success: false, error: err.message });

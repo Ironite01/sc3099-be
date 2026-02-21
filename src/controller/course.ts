@@ -1,94 +1,152 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { Course } from '../model/course.js';
+import type { CourseCreateData, CourseUpdateData, CourseListFilters } from '../model/course.js';
 
-interface CourseCreateBody {
-    code: string;
-    name: string;
-    semester: string;
-    description?: string;
-    venue_name?: string;
-    venue_latitude?: number;
-    venue_longitude?: number;
-    geofence_radius_meters?: number;
-    require_face_recognition?: boolean;
-    require_device_binding?: boolean;
-    risk_threshold?: number;
-}
+// --- JSON Schemas for validation & serialization ---
 
-interface CourseUpdateBody {
-    name?: string;
-    description?: string;
-    venue_name?: string;
-    venue_latitude?: number;
-    venue_longitude?: number;
-    geofence_radius_meters?: number;
-    require_face_recognition?: boolean;
-    require_device_binding?: boolean;
-    risk_threshold?: number;
-    is_active?: boolean;
-}
+const courseProperties = {
+    id: { type: 'string' },
+    code: { type: 'string' },
+    name: { type: 'string' },
+    description: { type: ['string', 'null'] },
+    semester: { type: 'string' },
+    is_active: { type: 'boolean' },
+    venue_name: { type: ['string', 'null'] },
+    venue_latitude: { type: ['number', 'null'] },
+    venue_longitude: { type: ['number', 'null'] },
+    geofence_radius_meters: { type: 'number' },
+    require_face_recognition: { type: 'boolean' },
+    require_device_binding: { type: 'boolean' },
+    risk_threshold: { type: 'number' },
+    created_at: { type: 'string', format: 'date-time' },
+    updated_at: { type: 'string', format: 'date-time' }
+};
 
-interface CourseListQuery {
-    is_active?: boolean;
-    semester?: string;
-    limit?: number;
-    offset?: number;
-}
+const courseResponseSchema = {
+    type: 'object',
+    properties: courseProperties
+};
 
-async function courseController(fastify: FastifyInstance) {
+const errorResponseSchema = {
+    type: 'object',
+    properties: {
+        detail: { type: 'string' }
+    }
+};
+
+const listCoursesSchema = {
+    querystring: {
+        type: 'object',
+        properties: {
+            is_active: { type: 'boolean' },
+            semester: { type: 'string' },
+            limit: { type: 'integer', default: 50 },
+            offset: { type: 'integer', default: 0 }
+        }
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: {
+                items: { type: 'array', items: courseResponseSchema },
+                total: { type: 'integer' },
+                limit: { type: 'integer' },
+                offset: { type: 'integer' }
+            }
+        }
+    }
+};
+
+const getCourseSchema = {
+    params: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string' } }
+    },
+    response: {
+        200: courseResponseSchema,
+        404: errorResponseSchema
+    }
+};
+
+const createCourseSchema = {
+    body: {
+        type: 'object',
+        required: ['code', 'name', 'semester'],
+        properties: {
+            code: { type: 'string' },
+            name: { type: 'string' },
+            semester: { type: 'string' },
+            description: { type: 'string' },
+            venue_name: { type: 'string' },
+            venue_latitude: { type: 'number' },
+            venue_longitude: { type: 'number' },
+            geofence_radius_meters: { type: 'number', default: 100.0 },
+            require_face_recognition: { type: 'boolean', default: false },
+            require_device_binding: { type: 'boolean', default: true },
+            risk_threshold: { type: 'number', default: 0.5 }
+        }
+    },
+    response: {
+        201: courseResponseSchema,
+        400: errorResponseSchema
+    }
+};
+
+const updateCourseSchema = {
+    params: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string' } }
+    },
+    body: {
+        type: 'object',
+        properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            venue_name: { type: 'string' },
+            venue_latitude: { type: 'number' },
+            venue_longitude: { type: 'number' },
+            geofence_radius_meters: { type: 'number' },
+            require_face_recognition: { type: 'boolean' },
+            require_device_binding: { type: 'boolean' },
+            risk_threshold: { type: 'number' },
+            is_active: { type: 'boolean' }
+        }
+    },
+    response: {
+        200: courseResponseSchema,
+        400: errorResponseSchema,
+        404: errorResponseSchema
+    }
+};
+
+const deleteCourseSchema = {
+    params: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string' } }
+    },
+    response: {
+        404: errorResponseSchema
+    }
+};
+
+// --- Controller ---
+
+async function courseController(fastify: any) {
     const baseUri = '/api/v1/courses';
 
-    // GET /courses/ - List courses with filters
-    fastify.get(baseUri + '/', async (req: FastifyRequest<{ Querystring: CourseListQuery }>, res: FastifyReply) => {
+    // GET /courses/ - List courses with filters (students: enrolled only, instructors: their courses)
+    fastify.get(baseUri + '/', { schema: listCoursesSchema, preHandler: [fastify.authorize(['student', 'ta', 'instructor', 'admin'])] }, async (req: FastifyRequest<{ Querystring: CourseListFilters }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
+            const user = req.user as { id: string, role: string };
             const { is_active, semester, limit = 50, offset = 0 } = req.query;
+            const { items, total } = await Course.findAll(pgClient, { is_active, semester, limit, offset }, user);
 
-            let query = `
-                SELECT *
-                FROM courses
-                WHERE 1=1
-            `;
-            const params: any[] = [];
-            let paramIndex = 1;
-
-            if (is_active !== undefined) {
-                query += ` AND is_active = $${paramIndex++}`;
-                params.push(is_active);
-            }
-            if (semester) {
-                query += ` AND semester = $${paramIndex++}`;
-                params.push(semester);
-            }
-
-
-            query += ` ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-            params.push(limit, offset);
-
-            const result = await pgClient.query(query, params);
-
-            // Get total count
-            let countQuery = 'SELECT COUNT(*) FROM courses WHERE 1=1';
-            const countParams: any[] = [];
-            let countParamIndex = 1;
-            if (is_active !== undefined) {
-                countQuery += ` AND is_active = $${countParamIndex++}`;
-                countParams.push(is_active);
-            }
-            if (semester) {
-                countQuery += ` AND semester = $${countParamIndex++}`;
-                countParams.push(semester);
-            }
-
-            const countResult = await pgClient.query(countQuery, countParams);
-            const total = parseInt(countResult.rows[0].count);
-
-            res.status(200).send({
-                items: result.rows,
-                total: total,
-                limit: limit,
-                offset: offset
-            });
+            res.status(200).send({ items, total, limit, offset });
         } catch (err: any) {
             console.error('Error listing courses:', err.message);
             res.status(500).send({ detail: err.message });
@@ -98,21 +156,15 @@ async function courseController(fastify: FastifyInstance) {
     });
 
     // GET /courses/{id} - Get single course
-    fastify.get(baseUri + '/:id', async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+    fastify.get(baseUri + '/:id', { schema: getCourseSchema, preHandler: [fastify.authorize(['student', 'ta', 'instructor', 'admin'])] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const { id } = req.params;
-            const result = await pgClient.query(
-                'SELECT * FROM courses WHERE id = $1',
-                [id]
-            );
-
-            if (result.rows.length === 0) {
+            const course = await Course.findById(pgClient, req.params.id);
+            if (!course) {
                 res.status(404).send({ detail: 'Course not found' });
                 return;
             }
-
-            res.status(200).send(result.rows[0]);
+            res.status(200).send(course);
         } catch (err: any) {
             console.error('Error getting course:', err.message);
             res.status(500).send({ detail: err.message });
@@ -122,44 +174,11 @@ async function courseController(fastify: FastifyInstance) {
     });
 
     // POST /courses/ - Create a new course (admin only)
-    fastify.post(baseUri + '/', async (req: FastifyRequest<{ Body: CourseCreateBody }>, res: FastifyReply) => {
+    fastify.post(baseUri + '/', { schema: createCourseSchema, preHandler: [fastify.authorize(['admin'])] }, async (req: FastifyRequest<{ Body: CourseCreateData }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const {
-                code,
-                name,
-                semester,
-                description = null,
-                venue_name = null,
-                venue_latitude = null,
-                venue_longitude = null,
-                geofence_radius_meters = 100.0,
-                require_face_recognition = false,
-                require_device_binding = true,
-                risk_threshold = 0.5
-            } = req.body;
-
-            const result = await pgClient.query(
-                `INSERT INTO courses (
-                    id, code, name, description, semester, is_active,
-                    venue_latitude, venue_longitude, venue_name,
-                    geofence_radius_meters, require_face_recognition, require_device_binding,
-                    risk_threshold, created_at, updated_at
-                )
-                 VALUES (
-                    gen_random_uuid()::text, $1, $2, $3, $4, TRUE,
-                    $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()
-                 )
-                 RETURNING *`,
-                [
-                    code, name, description, semester,
-                    venue_latitude, venue_longitude, venue_name,
-                    geofence_radius_meters, require_face_recognition, require_device_binding,
-                    risk_threshold
-                ]
-            );
-
-            res.status(201).send(result.rows[0]);
+            const course = await Course.create(pgClient, req.body);
+            res.status(201).send(course);
         } catch (err: any) {
             console.error('Error creating course:', err.message);
             res.status(400).send({ detail: err.message });
@@ -169,80 +188,36 @@ async function courseController(fastify: FastifyInstance) {
     });
 
     // PUT /courses/{id} - Update course (admin or course instructor)
-    fastify.put(baseUri + '/:id', async (req: FastifyRequest<{ Params: { id: string }, Body: CourseUpdateBody }>, res: FastifyReply) => {
+    fastify.put(baseUri + '/:id', { schema: updateCourseSchema, preHandler: [fastify.authorize(['instructor', 'admin'])] }, async (req: FastifyRequest<{ Params: { id: string }, Body: CourseUpdateData }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const { id } = req.params;
-            const updates = req.body;
-
-            // Build dynamic update query
-            const fields: string[] = [];
-            const values: any[] = [];
-            let paramIndex = 1;
-
-            const allowedFields = [
-                'name', 'description', 'venue_name', 'venue_latitude', 'venue_longitude',
-                'geofence_radius_meters', 'require_face_recognition', 'require_device_binding',
-                'risk_threshold', 'is_active'
-            ];
-
-            for (const field of allowedFields) {
-                if ((updates as any)[field] !== undefined) {
-                    fields.push(`${field} = $${paramIndex++}`);
-                    values.push((updates as any)[field]);
-                }
-            }
-
-            if (fields.length === 0) {
-                res.status(400).send({ detail: 'No valid fields to update' });
-                return;
-            }
-
-            fields.push(`updated_at = NOW()`);
-            values.push(id);
-
-            const query = `UPDATE courses SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
-            const result = await pgClient.query(query, values);
-
-            if (result.rows.length === 0) {
+            const course = await Course.update(pgClient, req.params.id, req.body);
+            if (!course) {
                 res.status(404).send({ detail: 'Course not found' });
                 return;
             }
-
-            res.status(200).send(result.rows[0]);
+            res.status(200).send(course);
         } catch (err: any) {
-            console.error('Error updating course:', err.message);
-            res.status(500).send({ detail: err.message });
+            if (err.message === 'No valid fields to update') {
+                res.status(400).send({ detail: err.message });
+            } else {
+                console.error('Error updating course:', err.message);
+                res.status(500).send({ detail: err.message });
+            }
         } finally {
             pgClient.release();
         }
     });
 
     // DELETE /courses/{id} - Soft delete course (admin only)
-    fastify.delete(baseUri + '/:id', async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+    fastify.delete(baseUri + '/:id', { schema: deleteCourseSchema, preHandler: [fastify.authorize(['admin'])] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const { id } = req.params;
-
-            // Soft delete the course
-            const result = await pgClient.query(
-                `UPDATE courses SET is_active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id`,
-                [id]
-            );
-
-            if (result.rows.length === 0) {
+            const deleted = await Course.delete(pgClient, req.params.id);
+            if (!deleted) {
                 res.status(404).send({ detail: 'Course not found' });
                 return;
             }
-
-            // Cancel all scheduled/active sessions for this course
-            await pgClient.query(
-                `UPDATE sessions 
-                 SET status = 'cancelled', updated_at = NOW() 
-                 WHERE course_id = $1 AND status IN ('scheduled', 'active')`,
-                [id]
-            );
-
             res.status(204).send();
         } catch (err: any) {
             console.error('Error deleting course:', err.message);
