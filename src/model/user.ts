@@ -2,7 +2,7 @@ import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
 import { isStrongPassword } from '../helpers/regex.js';
 import { v4 as uuidv4 } from 'uuid';
-import { BadRequestError, ForbiddenError, UnauthorizedError } from './error.js';
+import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
 
 export enum USER_ROLE_TYPES {
@@ -38,13 +38,13 @@ export const UserModel = {
             'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled FROM users WHERE id = $1',
             [id]
         );
-        if (rows.rowCount === 0) {
-            throw new BadRequestError("User not found!");
+        if (rows.length === 0) {
+            throw new NotFoundError();
         }
         const user: User = rows[0];
 
         if (!user.is_active) {
-            throw new ForbiddenError("User account is inactive!");
+            throw new ForbiddenError("Account disabled");
         }
 
         return user;
@@ -54,7 +54,7 @@ export const UserModel = {
 
         // Email validation is handled by ajv
         if (!isStrongPassword(password)) {
-            throw new BadRequestError("Password is not strong!");
+            throw new BadRequestError("Password too weak");
         }
 
         // TODO: Fetch the ML service
@@ -72,7 +72,7 @@ export const UserModel = {
         );
 
         if (resDb.rowCount === 0) {
-            throw new BadRequestError("Email already exists!");
+            throw new BadRequestError("Email already registered");
         }
         return resDb.rows[0] as User;
     },
@@ -87,20 +87,20 @@ export const UserModel = {
 
         // Check if user exists
         if (rows.length === 0) {
-            throw new UnauthorizedError("Credentials are invalid!");
+            throw new UnauthorizedError();
         }
 
         const user: User = rows[0];
 
         // Check if user account is active
         if (!user.is_active) {
-            throw new ForbiddenError("User account is inactive!");
+            throw new ForbiddenError("Account disabled");
         }
 
         // Compare provided password with stored hash
         const match = await bcrypt.compare(passwordClaim, user.hashed_password);
         if (!match) {
-            throw new UnauthorizedError("Credentials are invalid!");
+            throw new UnauthorizedError();
         }
 
         // Update last login timestamp
@@ -109,6 +109,9 @@ export const UserModel = {
             [user.id]
         );
 
-        return user;
+        return {
+            ...user,
+            hashed_password: undefined
+        };
     }
 }

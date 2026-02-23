@@ -1,17 +1,18 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
+import { NotFoundError } from "../model/error.js";
 import { UserModel } from "../model/user.js";
 
 async function userController(fastify: FastifyInstance) {
-    const uri = `${BASE_URL}/user`;
+    const uri = `${BASE_URL}/users`;
 
     fastify.get(`${uri}/me`, { preHandler: [(fastify as any).authorize()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const userId = (req?.user as any).sub;
             if (!userId) {
-                throw new Error("User not found!");
+                throw new NotFoundError();
             }
             const user = await UserModel.getById(pgClient, userId);
 
@@ -21,12 +22,10 @@ async function userController(fastify: FastifyInstance) {
                 full_name: user.full_name,
                 role: user.role,
                 camera_consent: user.camera_consent,
-                geolocation_consent: true,
-                face_enrolled: false,
+                geolocation_consent: user.geolocation_consent,
+                face_enrolled: user.face_enrolled,
                 created_at: user.created_at
             });
-        } catch (e: any) {
-            res.status(e?.statusCode || 500).send({ message: e.message });
         } finally {
             pgClient.release();
         }

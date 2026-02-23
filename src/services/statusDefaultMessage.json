@@ -1,0 +1,8 @@
+{
+    "400": "Invalid input data",
+    "401": "Could not validate credentials",
+    "403": "Insufficient permissions",
+    "404": "Resource not found",
+    "429": "Rate limit exceeded",
+    "500": "Internal server error"
+}
