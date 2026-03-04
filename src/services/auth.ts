@@ -4,6 +4,12 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { USER_ROLE_HIERARCHY, USER_ROLE_TYPES } from '../model/user.js';
 import { ForbiddenError, UnauthorizedError } from '../model/error.js';
 
+declare module 'fastify' {
+    interface FastifyInstance {
+        authorize: (arg: USER_ROLE_TYPES[] | number) => (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    }
+}
+
 function auth(fastify: any) {
     const secret = fastify.config.JWT_SECRET!!;
 
