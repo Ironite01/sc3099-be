@@ -7,6 +7,9 @@ import fastifyCookie from '@fastify/cookie';
 import envSchema from './services/envSchema.json' with { type: 'json' };
 import pg from './services/pg.js';
 import auth from './services/auth.js';
+import metrics from './services/metrics.js';
+import rateLimit from './services/rateLimit.js';
+import privacyCleanup from './services/privacy_cleanup.js';
 
 const server = fastify();
 
@@ -17,9 +20,12 @@ try {
             limits: { fileSize: 50 * 1024 * 1024 }
         })
         .register(fastifyCookie)
+        .register(rateLimit)
+        .register(metrics)
         .register(auth)
         .register(pg)
         .register(fastifyFormbody)
+        .register(privacyCleanup)
         .register(controller);
 
     await server.listen({ port: (server as any).config.PORT!! }, (err: Error | null, address: string) => {
