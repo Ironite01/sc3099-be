@@ -10,6 +10,87 @@ import { CheckinModel } from '../model/checkin.js';
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
 
+    // GET /api/v1/checkins/flagged - instructor/admin: list flagged checkins pending review
+    fastify.get(`${uri}/flagged`, {
+        schema: {
+            querystring: {
+                type: 'object',
+                properties: {
+                    limit: { type: 'integer', minimum: 1, maximum: 200, default: 20 }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const { limit = 20 } = req.query as { limit?: number };
+        const pgClient = await fastify.pg.connect();
+        try {
+            const result = await pgClient.query(
+                `SELECT ci.id, ci.student_id, u.full_name AS student_name, u.email AS student_email,
+                        ci.session_id, s.name AS session_name, c.code AS course_code,
+                        ci.status, ci.risk_score, ci.risk_factors, ci.checked_in_at,
+                        ci.distance_from_venue_meters, ci.liveness_passed
+                 FROM checkins ci
+                 JOIN users u ON u.id = ci.student_id
+                 JOIN sessions s ON s.id = ci.session_id
+                 JOIN courses c ON c.id = s.course_id
+                 WHERE ci.status = 'flagged'
+                 ORDER BY ci.checked_in_at DESC
+                 LIMIT $1`,
+                [limit]
+            );
+            res.status(200).send(result.rows);
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.get(`${uri}/session/:sessionId`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                    sessionId: { type: 'string' }
+                }
+            },
+            response: {
+                200: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            student_id: { type: 'string' },
+                            student_name: { type: 'string' },
+                            student_email: { type: 'string' },
+                            status: { type: 'string' },
+                            timestamp: { type: 'string', format: 'date-time' },
+                            checked_in_at: { type: 'string', format: 'date-time' },
+                            latitude: { type: 'number' },
+                            longitude: { type: 'number' },
+                            distance_from_venue_meters: { type: 'number' },
+                            liveness_passed: { type: 'boolean' },
+                            liveness_score: { type: ['number', 'null'] },
+                            risk_score: { type: ['number', 'null'] },
+                            risk_factors: { type: 'array', items: { type: 'object' } }
+                        }
+                    }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { sessionId } = req.params as { sessionId: string };
+            const checkins = await CheckinModel.listBySession(pgClient, sessionId);
+            res.status(200).send(checkins);
+        } finally {
+            pgClient.release();
+        }
+    });
+
     fastify.post(uri, {
         schema: {
             body: {

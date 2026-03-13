@@ -25,7 +25,53 @@ export type Checkin = {
     risk_factors: Record<string, any>[];
 };
 
+export type SessionCheckinRecord = {
+    id: string;
+    student_id: string;
+    student_name: string;
+    student_email: string;
+    status: CHECKIN_STATUS;
+    timestamp: Date;
+    checked_in_at: Date;
+    latitude: number;
+    longitude: number;
+    distance_from_venue_meters: number;
+    liveness_passed: boolean;
+    liveness_score: number | null;
+    risk_score: number | null;
+    risk_factors: Record<string, any>[];
+};
+
 export const CheckinModel = {
+    listBySession: async function listBySession(
+        pgClient: PoolClient,
+        sessionId: string
+    ): Promise<SessionCheckinRecord[]> {
+        const { rows } = await pgClient.query(
+            `SELECT c.id,
+                    c.student_id,
+                    u.full_name AS student_name,
+                    u.email AS student_email,
+                    c.status,
+                    c.checked_in_at AS timestamp,
+                    c.checked_in_at,
+                    c.latitude,
+                    c.longitude,
+                    c.distance_from_venue_meters,
+                    c.liveness_passed,
+                    c.liveness_score,
+                    c.risk_score,
+                    c.risk_factors
+             FROM checkins c
+             INNER JOIN users u ON u.id = c.student_id
+             WHERE c.session_id = $1
+             ORDER BY c.checked_in_at DESC`,
+            [sessionId]
+        );
+
+        return rows as SessionCheckinRecord[];
+    },
+
     getBySessionAndStudent: async function getBySessionAndStudent(
         pgClient: PoolClient,
         sessionId: string,
