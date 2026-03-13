@@ -27,6 +27,8 @@ try {
             limits: { fileSize: 50 * 1024 * 1024 }
         })
         .register(fastifyCookie)
+        .register(rateLimit)
+        .register(metrics)
         .register(auth)
         .register(pg)
         .register(fastifyFormbody)
