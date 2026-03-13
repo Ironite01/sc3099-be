@@ -9,6 +9,9 @@ import pg from './services/pg.js';
 import auth from './services/auth.js';
 import cors from './services/cors.js';
 import errorHandler from './services/errorHandler.js';
+import metrics from './services/metrics.js';
+import rateLimit from './services/rateLimit.js';
+import privacyCleanup from './services/privacy_cleanup.js';
 
 const server = fastify({
     ajv: {
@@ -32,6 +35,7 @@ try {
         .register(auth)
         .register(pg)
         .register(fastifyFormbody)
+        .register(privacyCleanup)
         .register(cors)
         .register(controller)
         .register(errorHandler);

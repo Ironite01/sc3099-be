@@ -1,7 +1,9 @@
 import fp from 'fastify-plugin';
 import type { FastifyPluginAsync } from 'fastify';
 import fastifyRateLimit from '@fastify/rate-limit';
-import IORedis from 'ioredis';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 const rateLimitPlugin: FastifyPluginAsync = async (fastify, opts) => {
     // SECURITY-REQUIREMENTS:
@@ -10,16 +12,26 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify, opts) => {
     // Check-in attempts: 10/min -> Configured in routes
     // Registration: 10/hour -> Configured in routes
 
-    const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6380/0';
+    const redisUrl = process.env.REDIS_URL;
+    let redis: any = undefined;
 
-    // Create connection to redis for rate limiter
-    const redis = new (IORedis as any)(REDIS_URL);
-
-    fastify.decorate('redis', redis);
+    if (redisUrl) {
+        try {
+            const redisModule = require('ioredis');
+            const IORedis = redisModule.default ?? redisModule;
+            redis = new (IORedis as any)(redisUrl);
+            redis.on('error', (err: Error) => {
+                fastify.log.warn({ err }, 'Redis rate-limit backend error; falling back to in-memory if unavailable');
+            });
+            fastify.decorate('redis', redis);
+        } catch (err) {
+            fastify.log.warn('ioredis not installed; using in-memory rate limiting');
+        }
+    }
 
     await fastify.register(fastifyRateLimit, {
         global: false, // Default limits are off globally, turned on per route or set a low global default
-        redis: redis,
+        redis,
         keyGenerator: (req) => {
             // Try to rate limit by user if they are logged in, fallback to IP
             if ((req as any).user) {
