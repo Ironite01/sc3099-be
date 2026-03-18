@@ -2,7 +2,7 @@ import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
 import { isStrongPassword } from '../helpers/regex.js';
 import { v4 as uuidv4 } from 'uuid';
-import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
 
 export enum USER_ROLE_TYPES {
@@ -72,7 +72,7 @@ export const UserModel = {
         );
 
         if (resDb.rowCount === 0) {
-            throw new BadRequestError("Email already registered");
+            throw new ConflictError("Email already registered");
         }
         return resDb.rows[0] as User;
     },

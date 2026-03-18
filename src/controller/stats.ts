@@ -41,6 +41,19 @@ async function statsController(fastify: FastifyInstance) {
             );
             const total_courses = parseInt(totalCoursesRow.rows[0].cnt, 10);
 
+            // Total active students (or distinct enrolled students when course filter is used)
+            const totalStudentsRow = await pgClient.query(
+                course_id
+                    ? `SELECT COUNT(DISTINCT e.student_id)::int AS cnt
+                       FROM enrollments e
+                       WHERE e.course_id = $1 AND e.is_active = TRUE`
+                    : `SELECT COUNT(*)::int AS cnt
+                       FROM users u
+                       WHERE u.role = 'student' AND u.is_active = TRUE`,
+                courseParam
+            );
+            const total_students = parseInt(totalStudentsRow.rows[0].cnt, 10);
+
             // Total sessions
             const totalSessionsRow = await pgClient.query(
                 `SELECT COUNT(*) AS cnt FROM sessions s
@@ -186,12 +199,15 @@ async function statsController(fastify: FastifyInstance) {
 
             res.status(200).send({
                 total_courses,
+                total_students,
                 total_sessions,
                 active_sessions,
                 total_checkins_today,
                 total_checkins_week,
                 average_attendance_rate,
                 flagged_pending_review,
+                today_checkins: total_checkins_today,
+                flagged_pending: flagged_pending_review,
                 approval_rate,
                 average_risk_score,
                 high_risk_checkins_today,
@@ -263,6 +279,7 @@ async function statsController(fastify: FastifyInstance) {
                 status: session.status,
                 total_enrolled,
                 checked_in,
+                checked_in_count: checked_in,
                 attendance_rate,
                 by_status: {
                     approved: parseInt(cs.approved, 10),
@@ -270,6 +287,8 @@ async function statsController(fastify: FastifyInstance) {
                     rejected: parseInt(cs.rejected, 10),
                     pending: parseInt(cs.pending, 10)
                 },
+                approved_count: parseInt(cs.approved, 10),
+                flagged_count: parseInt(cs.flagged, 10),
                 average_risk_score: parseFloat(cs.avg_risk) || 0,
                 average_distance_meters: parseFloat(cs.avg_distance) || 0,
                 risk_distribution: {
@@ -277,6 +296,240 @@ async function statsController(fastify: FastifyInstance) {
                     medium: parseInt(cs.medium_risk, 10),
                     high: parseInt(cs.high_risk, 10)
                 }
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.get(`${BASE_URL}/stats/courses/:courseId`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['courseId'],
+                properties: { courseId: { type: 'string' } }
+            },
+            querystring: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', format: 'date-time' },
+                    end_date: { type: 'string', format: 'date-time' }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const { courseId } = req.params as { courseId: string };
+        const { start_date, end_date } = req.query as { start_date?: string; end_date?: string };
+
+        const pgClient = await fastify.pg.connect();
+        try {
+            const courseResult = await pgClient.query(
+                `SELECT id, code, name
+                 FROM courses
+                 WHERE id = $1`,
+                [courseId]
+            );
+            if (!courseResult.rows.length) {
+                return res.status(404).send({ detail: 'Course not found' });
+            }
+            const course = courseResult.rows[0];
+
+            const params: any[] = [courseId];
+            const where: string[] = ['s.course_id = $1'];
+
+            if (start_date) {
+                params.push(start_date);
+                where.push(`s.scheduled_start >= $${params.length}`);
+            }
+            if (end_date) {
+                params.push(end_date);
+                where.push(`s.scheduled_start <= $${params.length}`);
+            }
+
+            const whereClause = `WHERE ${where.join(' AND ')}`;
+
+            const sessionsResult = await pgClient.query(
+                `SELECT s.id AS session_id,
+                        s.name,
+                        DATE(s.scheduled_start) AS date,
+                        COALESCE(ec.enrolled, 0) AS enrolled,
+                        COALESCE(cc.checked_in, 0) AS checked_in
+                 FROM sessions s
+                 LEFT JOIN (
+                    SELECT course_id, COUNT(*)::int AS enrolled
+                    FROM enrollments
+                    WHERE is_active = TRUE
+                    GROUP BY course_id
+                 ) ec ON ec.course_id = s.course_id
+                 LEFT JOIN (
+                    SELECT session_id, COUNT(*)::int AS checked_in
+                    FROM checkins
+                    GROUP BY session_id
+                 ) cc ON cc.session_id = s.id
+                 ${whereClause}
+                 ORDER BY s.scheduled_start ASC`,
+                params
+            );
+
+            const enrolledResult = await pgClient.query(
+                `SELECT COUNT(*)::int AS total_enrolled
+                 FROM enrollments
+                 WHERE course_id = $1 AND is_active = TRUE`,
+                [courseId]
+            );
+            const total_enrolled = enrolledResult.rows[0]?.total_enrolled ?? 0;
+
+            const sessions = sessionsResult.rows.map((r: any) => ({
+                session_id: r.session_id,
+                name: r.name,
+                date: r.date,
+                checked_in: r.checked_in,
+                attendance_rate: r.enrolled > 0 ? r.checked_in / r.enrolled : 0
+            }));
+
+            const total_sessions = sessions.length;
+            const overall_attendance_rate = total_sessions > 0
+                ? sessions.reduce((acc: number, s: any) => acc + s.attendance_rate, 0) / total_sessions
+                : 0;
+
+            const studentAttendanceResult = await pgClient.query(
+                `SELECT u.id AS student_id,
+                        u.full_name AS student_name,
+                        COUNT(DISTINCT ci.session_id)::int AS sessions_attended,
+                        COALESCE(AVG(ci.risk_score), 0) AS average_risk_score
+                 FROM enrollments e
+                 JOIN users u ON u.id = e.student_id
+                 LEFT JOIN sessions s ON s.course_id = e.course_id
+                 LEFT JOIN checkins ci ON ci.session_id = s.id AND ci.student_id = e.student_id
+                 WHERE e.course_id = $1 AND e.is_active = TRUE
+                 GROUP BY u.id, u.full_name
+                 ORDER BY u.full_name ASC`,
+                [courseId]
+            );
+
+            const student_attendance = studentAttendanceResult.rows.map((r: any) => ({
+                student_id: r.student_id,
+                student_name: r.student_name,
+                sessions_attended: r.sessions_attended,
+                attendance_rate: total_sessions > 0 ? r.sessions_attended / total_sessions : 0,
+                average_risk_score: parseFloat(r.average_risk_score) || 0
+            }));
+
+            const low_attendance_alerts = student_attendance
+                .filter((s: any) => s.attendance_rate < 0.75)
+                .map((s: any) => ({
+                    student_id: s.student_id,
+                    student_name: s.student_name,
+                    attendance_rate: s.attendance_rate,
+                    sessions_missed: Math.max(total_sessions - s.sessions_attended, 0)
+                }));
+
+            const flaggedCheckinsResult = await pgClient.query(
+                `SELECT COUNT(*)::int AS cnt
+                 FROM checkins ci
+                 JOIN sessions s ON s.id = ci.session_id
+                 WHERE s.course_id = $1
+                   AND ci.status IN ('flagged', 'appealed')`,
+                [courseId]
+            );
+            const flagged_checkins = flaggedCheckinsResult.rows[0]?.cnt ?? 0;
+
+            res.status(200).send({
+                course_id: course.id,
+                course_code: course.code,
+                course_name: course.name,
+                total_sessions,
+                total_enrolled,
+                overall_attendance_rate,
+                average_attendance_rate: overall_attendance_rate,
+                flagged_checkins,
+                sessions,
+                student_attendance,
+                low_attendance_alerts
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.get(`${BASE_URL}/stats/students/:studentId`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['studentId'],
+                properties: { studentId: { type: 'string' } }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const { studentId } = req.params as { studentId: string };
+        const pgClient = await fastify.pg.connect();
+        try {
+            const studentResult = await pgClient.query(
+                `SELECT id, full_name, email
+                 FROM users
+                 WHERE id = $1`,
+                [studentId]
+            );
+            if (!studentResult.rows.length) {
+                return res.status(404).send({ detail: 'Student not found' });
+            }
+            const student = studentResult.rows[0];
+
+            const coursesResult = await pgClient.query(
+                `SELECT c.id AS course_id,
+                        c.code AS course_code,
+                        COUNT(DISTINCT s.id)::int AS total_sessions,
+                        COUNT(DISTINCT ci.session_id)::int AS sessions_attended,
+                        COALESCE(AVG(ci.risk_score), 0) AS average_risk_score
+                 FROM enrollments e
+                 JOIN courses c ON c.id = e.course_id
+                 LEFT JOIN sessions s ON s.course_id = c.id
+                 LEFT JOIN checkins ci ON ci.session_id = s.id AND ci.student_id = e.student_id
+                 WHERE e.student_id = $1 AND e.is_active = TRUE
+                 GROUP BY c.id, c.code
+                 ORDER BY c.code ASC`,
+                [studentId]
+            );
+
+            const courses = coursesResult.rows.map((r: any) => ({
+                course_id: r.course_id,
+                course_code: r.course_code,
+                attendance_rate: r.total_sessions > 0 ? r.sessions_attended / r.total_sessions : 0,
+                sessions_attended: r.sessions_attended,
+                total_sessions: r.total_sessions,
+                average_risk_score: parseFloat(r.average_risk_score) || 0
+            }));
+
+            const recentCheckinsResult = await pgClient.query(
+                `SELECT s.name AS session_name,
+                        c.code AS course_code,
+                        ci.checked_in_at,
+                        ci.status
+                 FROM checkins ci
+                 JOIN sessions s ON s.id = ci.session_id
+                 JOIN courses c ON c.id = s.course_id
+                 WHERE ci.student_id = $1
+                 ORDER BY ci.checked_in_at DESC
+                 LIMIT 20`,
+                [studentId]
+            );
+
+            const totalSessions = courses.reduce((acc: number, c: any) => acc + c.total_sessions, 0);
+            const attendedSessions = courses.reduce((acc: number, c: any) => acc + c.sessions_attended, 0);
+
+            res.status(200).send({
+                student_id: student.id,
+                student_name: student.full_name,
+                student_email: student.email,
+                total_enrolled_courses: courses.length,
+                total_sessions: totalSessions,
+                attended_sessions: attendedSessions,
+                attendance_rate: totalSessions > 0 ? attendedSessions / totalSessions : 0,
+                courses,
+                recent_checkins: recentCheckinsResult.rows,
+                recent_sessions: recentCheckinsResult.rows
             });
         } finally {
             pgClient.release();

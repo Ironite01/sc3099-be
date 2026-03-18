@@ -9,8 +9,17 @@ import statsController from './stats.js';
 import auditController from './audit.js';
 import exportController from './export.js';
 import enrollmentController from './enrollment.js';
+import deviceController from './device.js';
 
 async function controller(fastify: FastifyInstance) {
+    fastify.get('/health', async (_req, res) => {
+        res.status(200).send({ status: 'healthy', api: 'up' });
+    });
+
+    fastify.get('/api/v1/health', async (_req, res) => {
+        res.status(200).send({ status: 'healthy', api: 'up' });
+    });
+
     fastify.register(authController)
         .register(userController)
         .register(courseController)
@@ -19,7 +28,8 @@ async function controller(fastify: FastifyInstance) {
         .register(statsController)
         .register(auditController)
         .register(exportController)
-        .register(enrollmentController);
+        .register(enrollmentController)
+        .register(deviceController);
 }
 
 export default fp(controller);

@@ -107,6 +107,20 @@ const VALID_SESSION_STATUSES = [
 ];
 
 export const SessionModel = {
+    closeExpiredActiveSessions: async function (pgClient: any): Promise<number> {
+        const result = await pgClient.query(
+            `UPDATE sessions
+             SET status = $1,
+                 actual_end = COALESCE(actual_end, NOW()),
+                 updated_at = NOW()
+             WHERE status = $2
+               AND checkin_closes_at IS NOT NULL
+               AND checkin_closes_at < NOW()`,
+            [SESSION_STATUS.CLOSED, SESSION_STATUS.ACTIVE]
+        );
+        return result.rowCount ?? 0;
+    },
+
     getById: async function (pgClient: any, id: string): Promise<Session> {
         const { rows } = await pgClient.query(
             `SELECT * FROM sessions WHERE id = $1`,

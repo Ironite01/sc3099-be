@@ -7,6 +7,28 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 async function enrollmentController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/enrollments`;
 
+    // GET /api/v1/enrollments/my-enrollments
+    fastify.get(`${uri}/my-enrollments`, {
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const studentId = (req.user as any)?.sub;
+            const result = await pgClient.query(
+                `SELECT e.id, e.course_id, c.code AS course_code, c.name AS course_name,
+                        c.semester, e.enrolled_at, e.is_active
+                 FROM enrollments e
+                 JOIN courses c ON c.id = e.course_id
+                 WHERE e.student_id = $1
+                 ORDER BY e.enrolled_at DESC`,
+                [studentId]
+            );
+            res.status(200).send(result.rows);
+        } finally {
+            pgClient.release();
+        }
+    });
+
     // GET /api/v1/enrollments/course/:courseId
     fastify.get(`${uri}/course/:courseId`, {
         schema: {
@@ -124,6 +146,72 @@ async function enrollmentController(fastify: FastifyInstance) {
                 message: 'Student enrolled successfully',
                 enrollment: upsert.rows[0]
             });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    // POST /api/v1/enrollments/ (spec-compatible alias)
+    fastify.post(`${uri}/`, {
+        schema: {
+            body: {
+                type: 'object',
+                required: ['student_id', 'course_id'],
+                properties: {
+                    student_id: { type: 'string' },
+                    course_id: { type: 'string' }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const { student_id, course_id } = req.body as { student_id: string; course_id: string };
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userCheck = await pgClient.query(
+                'SELECT id, role, is_active FROM users WHERE id = $1',
+                [student_id]
+            );
+            if (!userCheck.rows.length) {
+                return res.status(404).send({ detail: 'Student not found' });
+            }
+            if (userCheck.rows[0].role !== USER_ROLE_TYPES.STUDENT) {
+                return res.status(400).send({ detail: 'User is not a student' });
+            }
+            if (!userCheck.rows[0].is_active) {
+                return res.status(400).send({ detail: 'Student account is inactive' });
+            }
+
+            const courseCheck = await pgClient.query(
+                'SELECT id, is_active FROM courses WHERE id = $1',
+                [course_id]
+            );
+            if (!courseCheck.rows.length) {
+                return res.status(404).send({ detail: 'Course not found' });
+            }
+            if (!courseCheck.rows[0].is_active) {
+                return res.status(400).send({ detail: 'Course is inactive' });
+            }
+
+            const existing = await pgClient.query(
+                'SELECT id, is_active FROM enrollments WHERE student_id = $1 AND course_id = $2',
+                [student_id, course_id]
+            );
+
+            if (existing.rows.length && existing.rows[0].is_active) {
+                return res.status(400).send({ detail: 'Student already enrolled' });
+            }
+
+            const upsert = await pgClient.query(
+                `INSERT INTO enrollments (id, student_id, course_id, is_active, enrolled_at)
+                 VALUES (gen_random_uuid()::text, $1, $2, TRUE, NOW())
+                 ON CONFLICT (student_id, course_id)
+                 DO UPDATE SET is_active = TRUE, dropped_at = NULL
+                 RETURNING id, student_id, course_id, is_active, enrolled_at`,
+                [student_id, course_id]
+            );
+
+            res.status(201).send(upsert.rows[0]);
         } finally {
             pgClient.release();
         }

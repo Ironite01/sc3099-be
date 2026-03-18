@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { createHmac, randomBytes } from 'crypto';
 import { SessionModel } from '../model/session.js';
 import type { SessionCreateData, SessionUpdateData, SessionListFilters } from '../model/session.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
@@ -179,13 +180,206 @@ const deleteSessionSchema = {
     }
 };
 
+const QR_TTL_SECONDS = 300;
+const SESSION_TIMEZONE = 'Asia/Singapore';
+
+async function ensureSessionTimezoneColumns(fastify: any) {
+    const pgClient = await fastify.pg.connect();
+    const timezoneColumns = [
+        'scheduled_start',
+        'scheduled_end',
+        'checkin_opens_at',
+        'checkin_closes_at',
+        'actual_start',
+        'actual_end',
+        'qr_code_expires_at',
+        'created_at',
+        'updated_at'
+    ];
+    const nullableColumns = new Set(['actual_start', 'actual_end', 'qr_code_expires_at']);
+
+    try {
+        const { rows } = await pgClient.query(
+            `SELECT column_name, data_type
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'sessions'
+               AND column_name = ANY($1::text[])`,
+            [timezoneColumns]
+        );
+
+        for (const row of rows) {
+            if (row.data_type !== 'timestamp without time zone') {
+                continue;
+            }
+
+            const columnName = row.column_name as string;
+            const usingExpression = nullableColumns.has(columnName)
+                ? `CASE WHEN ${columnName} IS NULL THEN NULL ELSE ${columnName} AT TIME ZONE '${SESSION_TIMEZONE}' END`
+                : `${columnName} AT TIME ZONE '${SESSION_TIMEZONE}'`;
+
+            await pgClient.query(
+                `ALTER TABLE sessions
+                 ALTER COLUMN ${columnName} TYPE TIMESTAMPTZ
+                 USING ${usingExpression}`
+            );
+        }
+    } finally {
+        pgClient.release();
+    }
+}
+
+function signQrPayload(sessionId: string, expiresAtMs: number, secret: string): string {
+    return createHmac('sha256', secret)
+        .update(`${sessionId}.${expiresAtMs}`)
+        .digest('hex');
+}
+
+function buildQrPayload(sessionId: string, secret: string, expiresAt: Date): string {
+    const exp = expiresAt.getTime();
+    const sig = signQrPayload(sessionId, exp, secret);
+    return JSON.stringify({ sessionId, exp, sig });
+}
+
+async function issueSessionQr(pgClient: any, sessionId: string) {
+    const qrSecret = randomBytes(24).toString('hex');
+    const expiresAt = new Date(Date.now() + QR_TTL_SECONDS * 1000);
+
+    const { rows } = await pgClient.query(
+        `UPDATE sessions
+         SET qr_code_secret = $1,
+             qr_code_expires_at = $2,
+             updated_at = NOW()
+         WHERE id = $3
+         RETURNING *`,
+        [qrSecret, expiresAt, sessionId]
+    );
+
+    return rows[0] ?? null;
+}
+
 async function sessionController(fastify: any) {
     const baseUri = '/api/v1/sessions';
     const adminUri = '/api/v1/admin/sessions';
 
+    await ensureSessionTimezoneColumns(fastify);
+
+    fastify.get(`${baseUri}/active`, async (_req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            await SessionModel.closeExpiredActiveSessions(pgClient);
+
+            const result = await pgClient.query(
+                `SELECT s.id, s.course_id, c.code AS course_code, c.name AS course_name,
+                        s.name, s.session_type, s.status,
+                        s.scheduled_start, s.scheduled_end,
+                        s.checkin_opens_at, s.checkin_closes_at,
+                        s.venue_name, s.venue_latitude, s.venue_longitude,
+                        s.geofence_radius_meters, s.require_liveness_check,
+                        s.require_face_match, s.risk_threshold
+                 FROM sessions s
+                 JOIN courses c ON c.id = s.course_id
+                 WHERE s.status = 'active'
+                 ORDER BY s.checkin_opens_at ASC`
+            );
+
+            const now = Date.now();
+            const activeWithinWindow = result.rows.filter((row: any) => {
+                const opensAt = new Date(row.checkin_opens_at).getTime();
+                const closesAt = new Date(row.checkin_closes_at).getTime();
+                if (Number.isNaN(opensAt) || Number.isNaN(closesAt)) {
+                    return false;
+                }
+                return now >= opensAt && now <= closesAt;
+            });
+
+            res.status(200).send(activeWithinWindow);
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.get(`${baseUri}/my-sessions`, {
+        preHandler: [fastify.authorize(1)],
+        schema: {
+            querystring: {
+                type: 'object',
+                properties: {
+                    status: { type: 'string', enum: ['scheduled', 'active', 'closed', 'cancelled'] },
+                    upcoming: { type: 'boolean', default: false },
+                    limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 }
+                }
+            }
+        }
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            await SessionModel.closeExpiredActiveSessions(pgClient);
+
+            const user = req.user as any;
+            const userId = user?.sub as string;
+            const role = user?.role as USER_ROLE_TYPES;
+            const { status, upcoming = false, limit = 50 } = req.query as {
+                status?: string;
+                upcoming?: boolean;
+                limit?: number;
+            };
+
+            const params: any[] = [];
+            const where: string[] = [];
+
+            if (role === USER_ROLE_TYPES.STUDENT) {
+                params.push(userId);
+                where.push(`EXISTS (
+                    SELECT 1 FROM enrollments e
+                    WHERE e.course_id = s.course_id
+                      AND e.student_id = $${params.length}
+                      AND e.is_active = TRUE
+                )`);
+            } else {
+                params.push(userId);
+                where.push(`(
+                    s.instructor_id = $${params.length}
+                    OR $${params.length} IN (
+                        SELECT id FROM users WHERE role IN ('admin','instructor','ta')
+                    )
+                )`);
+            }
+
+            if (status) {
+                params.push(status);
+                where.push(`s.status = $${params.length}`);
+            }
+
+            if (upcoming) {
+                where.push('s.scheduled_start >= NOW()');
+            }
+
+            params.push(Math.max(1, Math.min(limit, 200)));
+
+            const query = `
+                SELECT s.*, c.code AS course_code, c.name AS course_name,
+                       u.full_name AS instructor_name
+                FROM sessions s
+                JOIN courses c ON c.id = s.course_id
+                LEFT JOIN users u ON u.id = s.instructor_id
+                ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+                ORDER BY s.scheduled_start ASC
+                LIMIT $${params.length}
+            `;
+
+            const result = await pgClient.query(query, params);
+            res.status(200).send(result.rows);
+        } finally {
+            pgClient.release();
+        }
+    });
+
     fastify.get(baseUri + '/', { schema: listSessionsSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Querystring: SessionListFilters }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
+            await SessionModel.closeExpiredActiveSessions(pgClient);
+
             const { limit = 50, offset = 0 } = req.query;
             const { items, total } = await SessionModel.findAll(pgClient, req.query);
 
@@ -198,9 +392,11 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.get(baseUri + '/:id', { schema: getSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+    fastify.get(baseUri + '/:id', { schema: getSessionSchema, preHandler: [fastify.authorize(1)] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
+            await SessionModel.closeExpiredActiveSessions(pgClient);
+
             const session = await SessionModel.findById(pgClient, req.params.id);
             if (!session) {
                 res.status(404).send({ detail: 'Session not found' });
@@ -252,11 +448,16 @@ async function sessionController(fastify: any) {
     fastify.patch(adminUri + '/:id/status', { schema: updateStatusSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Params: { id: string }, Body: { status: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const session = await SessionModel.updateStatus(pgClient, req.params.id, req.body.status);
+            let session = await SessionModel.updateStatus(pgClient, req.params.id, req.body.status);
             if (!session) {
                 res.status(404).send({ detail: 'Session not found' });
                 return;
             }
+
+            if (req.body.status === 'active') {
+                session = await issueSessionQr(pgClient, req.params.id);
+            }
+
             res.status(200).send(session);
         } catch (err: any) {
             if (err.message.startsWith('Invalid status')) {
@@ -265,6 +466,50 @@ async function sessionController(fastify: any) {
                 console.error('Error updating session status:', err.message);
                 res.status(500).send({ detail: err.message });
             }
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.get(adminUri + '/:id/qr', {
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])],
+        schema: {
+            params: {
+                type: 'object',
+                required: ['id'],
+                properties: { id: { type: 'string' } }
+            }
+        }
+    }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            await SessionModel.closeExpiredActiveSessions(pgClient);
+
+            const session = await SessionModel.getById(pgClient, req.params.id);
+            if (session.status !== 'active') {
+                res.status(400).send({ detail: 'QR code is only available for active sessions' });
+                return;
+            }
+
+            // Always rotate to a fresh short-lived QR token when instructor opens QR.
+            const currentSession = await issueSessionQr(pgClient, session.id);
+            if (!currentSession) {
+                res.status(404).send({ detail: 'Session not found' });
+                return;
+            }
+
+            const qrExpiresAt = currentSession.qr_code_expires_at
+                ? new Date(currentSession.qr_code_expires_at)
+                : new Date(Date.now() + QR_TTL_SECONDS * 1000);
+
+            const qrPayload = buildQrPayload(currentSession.id, currentSession.qr_code_secret!, qrExpiresAt);
+
+            res.status(200).send({
+                session_id: currentSession.id,
+                qr_payload: qrPayload,
+                qr_expires_at: qrExpiresAt.toISOString(),
+                qr_ttl_seconds: Math.max(0, Math.floor((qrExpiresAt.getTime() - Date.now()) / 1000))
+            });
         } finally {
             pgClient.release();
         }

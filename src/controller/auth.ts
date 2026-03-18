@@ -3,11 +3,12 @@ import fp from 'fastify-plugin';
 import { USER_ROLE_TYPES, UserModel } from '../model/user.js';
 import { ACCESS_TOKEN_TTL, BASE_URL, REFRESH_TOKEN_TTL } from '../helpers/constants.js';
 import { UnauthorizedError } from '../model/error.js';
+import { loginTotal, registrationTotal } from '../services/metrics.js';
 
 async function authController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/auth`;
 
-    // Student registeration
+    // POST /auth/register — accepts all roles per spec (student|instructor|ta|admin).
     fastify.post(`${uri}/register`, {
         schema: {
             body: {
@@ -26,7 +27,13 @@ async function authController(fastify: FastifyInstance) {
                         minLength: 4
                     },
                     role: {
-                        type: 'string'
+                        type: 'string',
+                        enum: [
+                            USER_ROLE_TYPES.STUDENT,
+                            USER_ROLE_TYPES.TA,
+                            USER_ROLE_TYPES.INSTRUCTOR,
+                            USER_ROLE_TYPES.ADMIN
+                        ]
                     }
                 },
                 required: ['email', 'password', 'full_name'],
@@ -37,7 +44,9 @@ async function authController(fastify: FastifyInstance) {
         const pgClient = await fastify.pg.connect();
         try {
             const body: any = req.body;
-            const user = await UserModel.create(pgClient, { ...body, role: USER_ROLE_TYPES.STUDENT });
+            const role = (body.role ?? USER_ROLE_TYPES.STUDENT) as USER_ROLE_TYPES;
+            const user = await UserModel.create(pgClient, { ...body, role });
+            registrationTotal.inc({ role });
             res.status(201).send({
                 id: user.id,
                 email: user.email,
@@ -71,7 +80,14 @@ async function authController(fastify: FastifyInstance) {
         const pgClient = await fastify.pg.connect();
         try {
             const { email, password: passwordClaim }: any = req.body;
-            const user = await UserModel.login(pgClient, email, passwordClaim);
+            let user: any;
+            try {
+                user = await UserModel.login(pgClient, email, passwordClaim);
+                loginTotal.inc({ status: 'success' });
+            } catch (err) {
+                loginTotal.inc({ status: 'failure' });
+                throw err;
+            }
 
             const accessToken = fastify.jwt.sign(
                 { sub: user.id, email: user.email, role: user.role }, { expiresIn: ACCESS_TOKEN_TTL }
@@ -154,6 +170,22 @@ async function authController(fastify: FastifyInstance) {
         } finally {
             pgClient.release();
         }
+    });
+
+    fastify.post(`${uri}/logout`, async (_req: FastifyRequest, res: FastifyReply) => {
+        res.clearCookie('access_token', {
+            path: '/',
+            httpOnly: true,
+            sameSite: 'strict',
+            secure: process.env.NODE_ENV === 'production'
+        });
+        res.clearCookie('refresh_token', {
+            path: '/',
+            httpOnly: true,
+            sameSite: 'strict',
+            secure: process.env.NODE_ENV === 'production'
+        });
+        res.status(200).send({ message: 'Logged out successfully' });
     });
 }
 
