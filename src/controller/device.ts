@@ -35,24 +35,6 @@ async function deviceController(fastify: FastifyInstance) {
                     public_key: {
                         type: 'string',
                         minLength: 1
-                    },
-                    platformAttestation: {
-                        type: 'object',
-                        properties: {
-                            integrityToken: {
-                                type: 'string'
-                            },
-                            attestationObject: {
-                                type: 'string'
-                            }
-                        },
-                        additionalProperties: false
-                    },
-                    deviceDetectedEmulator: {
-                        type: 'boolean'
-                    },
-                    deviceDetectedRooted: {
-                        type: 'boolean'
                     }
                 },
                 required: ['device_fingerprint', 'public_key'],
@@ -73,9 +55,6 @@ async function deviceController(fastify: FastifyInstance) {
             is_trusted: device.is_trusted,
             trust_score: device.trust_score,
             is_active: device.is_active,
-            attestation_passed: device.attestation_passed,
-            is_emulator: device.is_emulator,
-            is_rooted_jailbroken: device.is_rooted_jailbroken,
             first_seen_at: device.first_seen_at
         });
     });

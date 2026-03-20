@@ -2,7 +2,6 @@ import type { PoolClient } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
 import { BadRequestError, NotFoundError, ForbiddenError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
-import deviceAttestationService from '../services/attestation/index.js';
 
 export enum PLATFORM_TYPES {
     IOS = 'ios',
@@ -45,6 +44,7 @@ export type Device = {
 };
 
 export const DeviceModel = {
+    // TODO: Check if device is rooted/jailbroken or/and using emulator
     register: async function register(
         transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>,
         userId: string,
@@ -56,12 +56,6 @@ export const DeviceModel = {
             os_version?: string;
             app_version?: string;
             public_key: string;
-            platformAttestation?: {
-                integrityToken?: string;
-                attestationObject?: string;
-            }
-            deviceDetectedEmulator?: boolean;
-            deviceDetectedRooted?: boolean;
         }
     ) {
         const {
@@ -71,22 +65,12 @@ export const DeviceModel = {
             browser,
             os_version,
             app_version,
-            public_key,
-            platformAttestation,
-            deviceDetectedEmulator,
-            deviceDetectedRooted
+            public_key
         } = payload;
         // Check if the platform is valid if platform is provided in the payload
         if (platform && !Object.values(PLATFORM_TYPES).includes(platform as PLATFORM_TYPES)) {
             throw new BadRequestError("Invalid platform type");
         }
-
-        const attestationResult = await deviceAttestationService({
-            platform,
-            platformAttestation,
-            deviceDetectedEmulator,
-            deviceDetectedRooted
-        });
 
         // Create new device with UUID formatted as VARCHAR(36)
         const deviceId = uuidv4();
@@ -106,15 +90,7 @@ export const DeviceModel = {
                 [
                     deviceId, userId, device_fingerprint, device_name || null, platform || null,
                     browser || null, os_version || null, app_version || null, public_key, now,
-                    attestationResult.passed,
-                    false,
-                    TRUST_SCORE_TYPES.LOW,
-                    attestationResult.isEmulator,
-                    attestationResult.isRootedJailbroken,
-                    now,
-                    now,
-                    0,
-                    true
+                    false, false, TRUST_SCORE_TYPES.LOW, false, false, now, now, 0, true
                 ]
             );
 
@@ -140,6 +116,20 @@ export const DeviceModel = {
 
         return rows as Device[];
     },
+    // TODO: Remove?
+    getById: async function getById(pgClient: PoolClient, deviceId: string) {
+        const { rows } = await pgClient.query(
+            `SELECT * FROM devices WHERE id = $1`,
+            [deviceId]
+        );
+
+        if (rows.length === 0) {
+            throw new NotFoundError("Device not found");
+        }
+
+        return rows[0] as Device;
+    },
+
     update: async function update(
         transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>,
         deviceId: string,
