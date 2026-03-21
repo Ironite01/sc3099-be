@@ -1,12 +1,10 @@
-import androidAttestationService from './android.js';
 import { PLATFORM_TYPES } from '../../model/device.js';
-import { BadRequestError } from '../../model/error.js';
-import { iosAttestationService } from './ios.js';
 
 interface AttestationResult {
     passed: boolean;
     isEmulator: boolean;
     isRootedJailbroken: boolean;
+    attestationToken?: string | null;
     integrityVerdict: string | null;
     error?: string;
 }
