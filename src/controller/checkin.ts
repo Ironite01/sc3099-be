@@ -72,7 +72,55 @@ function secureEqualsHex(a: string, b: string): boolean {
     }
 }
 
+async function ensureCheckinTimezoneColumn(fastify: FastifyInstance): Promise<void> {
+    const pgClient = await fastify.pg.connect();
+    try {
+        const result = await pgClient.query(
+            `SELECT data_type
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'checkins'
+               AND column_name = 'checked_in_at'`
+        );
+
+        const dataType = result.rows[0]?.data_type as string | undefined;
+        if (dataType !== 'timestamp without time zone') {
+            // Continue to sanity-fix legacy rows that may have been written 8h ahead.
+            const driftFix = await pgClient.query(
+                `UPDATE checkins
+                 SET checked_in_at = checked_in_at - INTERVAL '8 hours'
+                 WHERE checked_in_at > NOW() + INTERVAL '2 hours'`
+            );
+            if ((driftFix.rowCount ?? 0) > 0) {
+                fastify.log.warn(`[checkins] Corrected ${(driftFix.rowCount ?? 0)} future-drifted check-in timestamps (-8h).`);
+            }
+            return;
+        }
+
+        // Legacy DBs may have checkins.checked_in_at as timestamp (without timezone).
+        // Interpret existing stored values as UTC and migrate to TIMESTAMPTZ once.
+        await pgClient.query(
+            `ALTER TABLE checkins
+             ALTER COLUMN checked_in_at TYPE TIMESTAMPTZ
+             USING checked_in_at AT TIME ZONE 'UTC'`
+        );
+
+        const driftFix = await pgClient.query(
+            `UPDATE checkins
+             SET checked_in_at = checked_in_at - INTERVAL '8 hours'
+             WHERE checked_in_at > NOW() + INTERVAL '2 hours'`
+        );
+        if ((driftFix.rowCount ?? 0) > 0) {
+            fastify.log.warn(`[checkins] Corrected ${(driftFix.rowCount ?? 0)} future-drifted check-in timestamps (-8h).`);
+        }
+    } finally {
+        pgClient.release();
+    }
+}
+
 async function checkinController(fastify: FastifyInstance) {
+    await ensureCheckinTimezoneColumn(fastify);
+
     const uri = `${BASE_URL}/checkins`;
 
     fastify.get(`${uri}/`, {
@@ -169,7 +217,7 @@ async function checkinController(fastify: FastifyInstance) {
                         u.full_name AS student_name,
                         u.email AS student_email,
                         ci.status,
-                        TO_CHAR((ci.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                         ci.distance_from_venue_meters,
                         ci.risk_score,
                         ci.liveness_passed
@@ -277,7 +325,7 @@ async function checkinController(fastify: FastifyInstance) {
                 `SELECT ci.id, ci.student_id, u.full_name AS student_name, u.email AS student_email,
                         ci.session_id, s.name AS session_name, c.code AS course_code,
                         ci.status, ci.risk_score, ci.risk_factors, 
-                        TO_CHAR((ci.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                         ci.distance_from_venue_meters, ci.liveness_passed
                  FROM checkins ci
                  JOIN users u ON u.id = ci.student_id
@@ -321,7 +369,7 @@ async function checkinController(fastify: FastifyInstance) {
         try {
             const result = await pgClient.query(
                 `SELECT ci.id, ci.session_id, ci.student_id, ci.status, 
-                        TO_CHAR((ci.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                         ci.latitude, ci.longitude, ci.distance_from_venue_meters,
                         ci.liveness_passed, ci.liveness_score, ci.risk_score, ci.risk_factors,
                         s.course_id, s.name AS session_name,

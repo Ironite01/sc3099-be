@@ -125,7 +125,9 @@ async function schemaBootstrap(fastify: FastifyInstance) {
 
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_sessions_course_id ON sessions(course_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`);
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_sessions_status_checkin_close ON sessions(status, checkin_closes_at)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_enrollments_student_id ON enrollments(student_id)`);
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_enrollments_course_active ON enrollments(course_id, is_active)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_session_id ON checkins(session_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_student_id ON checkins(student_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_checked_in_at ON checkins(checked_in_at)`);

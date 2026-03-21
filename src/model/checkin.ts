@@ -174,7 +174,6 @@ export const CheckinModel = {
             throw new BadRequestError('Already checked in');
         }
 
-        const now = new Date();
         const status = payload.status || CHECKIN_STATUS.APPROVED;
         const livenessPassed = payload.liveness_passed ?? false;
         const riskFactors = payload.risk_factors ?? [];
@@ -185,9 +184,9 @@ export const CheckinModel = {
                 latitude, longitude, distance_from_venue_meters,
                 liveness_passed, liveness_score, risk_score, risk_factors
             ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8,
-                $9, $10, $11, $12::jsonb
+                $1, $2, $3, $4, NOW(),
+                $5, $6, $7,
+                $8, $9, $10, $11::jsonb
             )
             RETURNING id, session_id, student_id, status, 
                       TO_CHAR(checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
@@ -198,7 +197,6 @@ export const CheckinModel = {
                 payload.session_id,
                 payload.student_id,
                 status,
-                now,
                 payload.latitude,
                 payload.longitude,
                 payload.distance_from_venue_meters,

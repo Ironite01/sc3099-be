@@ -182,6 +182,18 @@ const deleteSessionSchema = {
 
 const QR_TTL_SECONDS = 300;
 const SESSION_TIMEZONE = 'Asia/Singapore';
+const CLOSE_EXPIRED_COOLDOWN_MS = 30_000;
+let lastCloseExpiredRunAt = 0;
+
+async function maybeCloseExpiredSessions(pgClient: any): Promise<number> {
+    const now = Date.now();
+    if (now - lastCloseExpiredRunAt < CLOSE_EXPIRED_COOLDOWN_MS) {
+        return 0;
+    }
+
+    lastCloseExpiredRunAt = now;
+    return SessionModel.closeExpiredActiveSessions(pgClient);
+}
 
 async function ensureSessionTimezoneColumns(fastify: any) {
     const pgClient = await fastify.pg.connect();
@@ -267,7 +279,7 @@ async function sessionController(fastify: any) {
     fastify.get(`${baseUri}/active`, async (_req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await SessionModel.closeExpiredActiveSessions(pgClient);
+            await maybeCloseExpiredSessions(pgClient);
 
             const result = await pgClient.query(
                 `SELECT s.id, s.course_id, c.code AS course_code, c.name AS course_name,
@@ -314,7 +326,7 @@ async function sessionController(fastify: any) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await SessionModel.closeExpiredActiveSessions(pgClient);
+            await maybeCloseExpiredSessions(pgClient);
 
             const user = req.user as any;
             const userId = user?.sub as string;
@@ -378,7 +390,7 @@ async function sessionController(fastify: any) {
     fastify.get(baseUri + '/', { schema: listSessionsSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Querystring: SessionListFilters }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await SessionModel.closeExpiredActiveSessions(pgClient);
+            await maybeCloseExpiredSessions(pgClient);
 
             const { limit = 50, offset = 0 } = req.query;
             const { items, total } = await SessionModel.findAll(pgClient, req.query);
@@ -395,7 +407,7 @@ async function sessionController(fastify: any) {
     fastify.get(baseUri + '/:id', { schema: getSessionSchema, preHandler: [fastify.authorize(1)] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await SessionModel.closeExpiredActiveSessions(pgClient);
+            await maybeCloseExpiredSessions(pgClient);
 
             const session = await SessionModel.findById(pgClient, req.params.id);
             if (!session) {
@@ -483,7 +495,7 @@ async function sessionController(fastify: any) {
     }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await SessionModel.closeExpiredActiveSessions(pgClient);
+            await maybeCloseExpiredSessions(pgClient);
 
             const session = await SessionModel.getById(pgClient, req.params.id);
             if (session.status !== 'active') {

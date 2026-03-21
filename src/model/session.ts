@@ -136,13 +136,26 @@ export const SessionModel = {
         const { status, course_id, instructor_id, start_date, end_date, limit = 50, offset = 0 } = filters;
 
         let query = `
+            WITH enroll_counts AS (
+                SELECT e.course_id, COUNT(*)::int AS total_enrolled
+                FROM enrollments e
+                WHERE e.is_active = TRUE
+                GROUP BY e.course_id
+            ),
+            checkin_counts AS (
+                SELECT ch.session_id, COUNT(*)::int AS checked_in_count
+                FROM checkins ch
+                GROUP BY ch.session_id
+            )
             SELECT s.*, c.code as course_code, c.name as course_name,
                    u.full_name as instructor_name,
-                   COALESCE((SELECT COUNT(*) FROM enrollments e WHERE e.course_id = s.course_id AND e.is_active = TRUE), 0) as total_enrolled,
-                   COALESCE((SELECT COUNT(*) FROM checkins ch WHERE ch.session_id = s.id), 0) as checked_in_count
+                   COALESCE(ec.total_enrolled, 0) as total_enrolled,
+                   COALESCE(cc.checked_in_count, 0) as checked_in_count
             FROM sessions s
             LEFT JOIN courses c ON s.course_id = c.id
             LEFT JOIN users u ON s.instructor_id = u.id
+            LEFT JOIN enroll_counts ec ON ec.course_id = s.course_id
+            LEFT JOIN checkin_counts cc ON cc.session_id = s.id
             WHERE 1=1
         `;
         const params: any[] = [];
