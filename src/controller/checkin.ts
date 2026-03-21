@@ -169,7 +169,7 @@ async function checkinController(fastify: FastifyInstance) {
                         u.full_name AS student_name,
                         u.email AS student_email,
                         ci.status,
-                        ci.checked_in_at,
+                        TO_CHAR((ci.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                         ci.distance_from_venue_meters,
                         ci.risk_score,
                         ci.liveness_passed
@@ -239,7 +239,7 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA])]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const {
             course_id,
@@ -276,7 +276,8 @@ async function checkinController(fastify: FastifyInstance) {
             const result = await pgClient.query(
                 `SELECT ci.id, ci.student_id, u.full_name AS student_name, u.email AS student_email,
                         ci.session_id, s.name AS session_name, c.code AS course_code,
-                        ci.status, ci.risk_score, ci.risk_factors, ci.checked_in_at,
+                        ci.status, ci.risk_score, ci.risk_factors, 
+                        TO_CHAR((ci.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                         ci.distance_from_venue_meters, ci.liveness_passed
                  FROM checkins ci
                  JOIN users u ON u.id = ci.student_id
@@ -319,7 +320,11 @@ async function checkinController(fastify: FastifyInstance) {
         const pgClient = await fastify.pg.connect();
         try {
             const result = await pgClient.query(
-                `SELECT ci.*, s.course_id, s.name AS session_name,
+                `SELECT ci.id, ci.session_id, ci.student_id, ci.status, 
+                        TO_CHAR((ci.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                        ci.latitude, ci.longitude, ci.distance_from_venue_meters,
+                        ci.liveness_passed, ci.liveness_score, ci.risk_score, ci.risk_factors,
+                        s.course_id, s.name AS session_name,
                         c.code AS course_code, c.name AS course_name,
                         u.full_name AS student_name, u.email AS student_email
                  FROM checkins ci
@@ -534,7 +539,7 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA])]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -626,7 +631,10 @@ async function checkinController(fastify: FastifyInstance) {
             }
 
             const distance = haversineDistance(latitude, longitude, venueLat, venueLon);
-            if (distance > geofenceRadius) {
+            // Only hard-reject at 2x geofence radius (per spec: GPS > 2x geofence → rejected).
+            // Distances between 1x and 2x are allowed through but will receive a higher
+            // geo risk score, likely resulting in the check-in being flagged for review.
+            if (distance > geofenceRadius * 2) {
                 throw new BadRequestError('Location is outside the permitted geofence');
             }
 
@@ -765,7 +773,7 @@ async function checkinController(fastify: FastifyInstance) {
                 session_id: checkin.session_id,
                 student_id: checkin.student_id,
                 status: checkin.status,
-                checked_in_at: checkin.checked_in_at,
+                checked_in_at: checkin.checked_in_at, // CheckinModel.create should already return it SGT if we modify the model, but here it's likely just returning the newly inserted row. 
                 latitude: checkin.latitude,
                 longitude: checkin.longitude,
                 distance_from_venue_meters: checkin.distance_from_venue_meters,

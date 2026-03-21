@@ -18,6 +18,17 @@ function auth(fastify: any) {
         cookie: {
             cookieName: 'access_token',
             signed: false
+        },
+        verify: {
+            extractToken: (request: FastifyRequest) => {
+                // 1. Check Authorization header first (preferred for programmatic calls)
+                const authHeader = request.headers.authorization;
+                if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+                    return authHeader.substring(7);
+                }
+                // 2. Fallback to cookie (default for browser navigation/normal use)
+                return request.cookies.access_token;
+            }
         }
     })
 

@@ -79,7 +79,7 @@ export const CheckinModel = {
                     c.code AS course_code,
                     c.name AS course_name,
                     ci.status,
-                    ci.checked_in_at,
+                    TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                     ci.risk_score
              FROM checkins ci
              JOIN sessions s ON s.id = ci.session_id
@@ -103,8 +103,8 @@ export const CheckinModel = {
                     u.full_name AS student_name,
                     u.email AS student_email,
                     c.status,
-                    c.checked_in_at AS timestamp,
-                    c.checked_in_at,
+                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS timestamp,
+                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                     c.latitude,
                     c.longitude,
                     c.distance_from_venue_meters,
@@ -189,7 +189,8 @@ export const CheckinModel = {
                 $6, $7, $8,
                 $9, $10, $11, $12::jsonb
             )
-            RETURNING id, session_id, student_id, status, checked_in_at,
+            RETURNING id, session_id, student_id, status, 
+                      TO_CHAR(checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
                       latitude, longitude, distance_from_venue_meters,
                       liveness_passed, liveness_score, risk_score, risk_factors`,
             [

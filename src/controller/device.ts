@@ -43,6 +43,7 @@ async function ensureDeviceTable(fastify: FastifyInstance) {
         await pgClient.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
         await pgClient.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
         await pgClient.query(`CREATE UNIQUE INDEX IF NOT EXISTS devices_user_fingerprint_ux ON devices(user_id, device_fingerprint)`);
+        await pgClient.query(`DO $$ BEGIN ALTER TABLE devices ADD CONSTRAINT devices_device_fingerprint_key UNIQUE (device_fingerprint); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN END; $$;`);
     } finally {
         pgClient.release();
     }
@@ -54,7 +55,7 @@ async function deviceController(fastify: FastifyInstance) {
     await ensureDeviceTable(fastify);
 
     fastify.get(`${uri}/`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR])],
         schema: {
             querystring: {
                 type: 'object',
@@ -99,7 +100,10 @@ async function deviceController(fastify: FastifyInstance) {
             const result = await pgClient.query(
                 `SELECT d.id, d.user_id, u.email, u.full_name, d.device_fingerprint,
                         d.device_name, d.platform, d.is_trusted, d.trust_score,
-                        d.is_active, d.first_seen_at, d.last_seen_at, d.total_checkins
+                        d.is_active, 
+                        TO_CHAR((d.first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at, 
+                        TO_CHAR((d.last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at, 
+                        d.total_checkins
                  FROM devices d
                  LEFT JOIN users u ON u.id = d.user_id
                  ${whereClause}
@@ -162,12 +166,21 @@ async function deviceController(fastify: FastifyInstance) {
                     last_seen_at = NOW(),
                     updated_at = NOW()
                 RETURNING id, device_fingerprint, device_name, platform,
-                          is_trusted, trust_score, is_active, first_seen_at, last_seen_at, total_checkins`,
+                          is_trusted, trust_score, is_active, 
+                          TO_CHAR((first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at, 
+                          TO_CHAR((last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at, 
+                          total_checkins`,
                 [userId, device_fingerprint, device_name ?? null, platform ?? null, normalizedPublicKey]
             );
 
             res.status(201).send(result.rows[0]);
             deviceRegistrationTotal.inc();
+        } catch (err: any) {
+            if (err.code === '23505' && (err.constraint === 'devices_device_fingerprint_key' || (err.message && err.message.includes('devices_device_fingerprint_key')))) {
+                res.status(409).send({ message: 'Device already registered to another account. Please unbind first.' });
+                return;
+            }
+            throw err;
         } finally {
             pgClient.release();
         }
@@ -215,12 +228,21 @@ async function deviceController(fastify: FastifyInstance) {
                     last_seen_at = NOW(),
                     updated_at = NOW()
                 RETURNING id, device_fingerprint, device_name, platform,
-                          is_trusted, trust_score, is_active, first_seen_at, last_seen_at, total_checkins`,
+                          is_trusted, trust_score, is_active, 
+                          TO_CHAR((first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at, 
+                          TO_CHAR((last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at, 
+                          total_checkins`,
                 [userId, device_fingerprint, device_name ?? null, platform ?? null, normalizedPublicKey]
             );
 
             res.status(201).send(result.rows[0]);
             deviceRegistrationTotal.inc();
+        } catch (err: any) {
+            if (err.code === '23505' && err.constraint === 'devices_device_fingerprint_key') {
+                res.status(409).send({ message: 'Device already registered to another account. Please unbind first.' });
+                return;
+            }
+            throw err;
         } finally {
             pgClient.release();
         }
@@ -234,7 +256,10 @@ async function deviceController(fastify: FastifyInstance) {
         try {
             const result = await pgClient.query(
                 `SELECT id, device_name, platform, is_trusted, trust_score,
-                        is_active, first_seen_at, last_seen_at, total_checkins
+                        is_active, 
+                        TO_CHAR((first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at, 
+                        TO_CHAR((last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at, 
+                        total_checkins
                  FROM devices
                  WHERE user_id = $1
                  ORDER BY last_seen_at DESC`,
@@ -283,8 +308,8 @@ async function deviceController(fastify: FastifyInstance) {
             }
             const ownerId = ownerCheck.rows[0].user_id as string;
             const isOwner = ownerId === userId;
-            const isAdmin = role === USER_ROLE_TYPES.ADMIN;
-            if (!isOwner && !isAdmin) {
+            const isAdminOrInstructor = role === USER_ROLE_TYPES.ADMIN || role === USER_ROLE_TYPES.INSTRUCTOR;
+            if (!isOwner && !isAdminOrInstructor) {
                 throw new ForbiddenError();
             }
 
@@ -318,7 +343,10 @@ async function deviceController(fastify: FastifyInstance) {
                  SET ${updates.join(', ')}, updated_at = NOW()
                  WHERE id = $${p}
                  RETURNING id, device_fingerprint, device_name, platform,
-                           is_trusted, trust_score, is_active, first_seen_at, last_seen_at, total_checkins`,
+                           is_trusted, trust_score, is_active, 
+                           TO_CHAR((first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at, 
+                           TO_CHAR((last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at, 
+                           total_checkins`,
                 values
             );
 
@@ -355,8 +383,8 @@ async function deviceController(fastify: FastifyInstance) {
             }
             const ownerId = ownerCheck.rows[0].user_id as string;
             const isOwner = ownerId === userId;
-            const isAdmin = role === USER_ROLE_TYPES.ADMIN;
-            if (!isOwner && !isAdmin) {
+            const isAdminOrInstructor = role === USER_ROLE_TYPES.ADMIN || role === USER_ROLE_TYPES.INSTRUCTOR;
+            if (!isOwner && !isAdminOrInstructor) {
                 throw new ForbiddenError();
             }
 

@@ -11,7 +11,7 @@ async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
 
     fastify.get(`${uri}/`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR])],
         schema: {
             querystring: {
                 type: 'object',
