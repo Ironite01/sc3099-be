@@ -99,7 +99,7 @@
   - Allow: full_name, camera_consent, geolocation_consent
   - Requires: Auth
 
-- [ ] **GET /users/** - List all users (admin only)
+- [x] **GET /users/** - List all users (admin only)
   - Query params: role, is_active, search, limit, offset
   - Pagination required
   - Requires: Admin role

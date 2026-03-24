@@ -4,7 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { BASE_URL } from "../helpers/constants.js";
 import { BadRequestError, NotFoundError } from "../model/error.js";
-import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
+import { USER_ROLE_TYPES, UserModel, type User } from "../model/user.js";
 import { SALT_ROUNDS } from '../helpers/constants.js';
 
 async function userController(fastify: FastifyInstance) {
