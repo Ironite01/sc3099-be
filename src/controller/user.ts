@@ -30,6 +30,42 @@ async function userController(fastify: FastifyInstance) {
             pgClient.release();
         }
     });
+
+    fastify.put(`${uri}/me`, {
+        schema: {
+            body: {
+                type: "object",
+                properties: {
+                    full_name: { type: "string" },
+                    camera_consent: { type: "boolean" },
+                    geolocation_consent: { type: "boolean" }
+                }
+            }
+        },
+        preHandler: [fastify.authorize()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userId = (req?.user as any).sub;
+            if (!userId) {
+                throw new NotFoundError();
+            }
+            const updatedUser = await UserModel.updateById(pgClient, userId, req.body as any);
+
+            res.status(200).send({
+                id: updatedUser.id,
+                email: updatedUser.email,
+                full_name: updatedUser.full_name,
+                role: updatedUser.role,
+                camera_consent: updatedUser.camera_consent,
+                geolocation_consent: updatedUser.geolocation_consent,
+                face_enrolled: updatedUser.face_enrolled,
+                created_at: updatedUser.created_at
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
 }
 
 export default fp(userController);

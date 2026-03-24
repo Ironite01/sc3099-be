@@ -111,5 +111,42 @@ export const UserModel = {
             ...user,
             hashed_password: undefined
         };
+    },
+    updateById: async function updateById(pgClient: PoolClient, userId: string, payload: Partial<{ camera_consent: boolean, geolocation_consent: boolean, full_name: string }>) {
+        const { camera_consent, geolocation_consent, full_name } = payload;
+
+        const updates: string[] = [];
+        const values: any[] = [];
+
+        if (full_name !== undefined) {
+            updates.push(`full_name = $${updates.length + 1}`);
+            values.push(full_name);
+        }
+        if (camera_consent !== undefined) {
+            updates.push(`camera_consent = $${updates.length + 1}`);
+            values.push(camera_consent);
+        }
+        if (geolocation_consent !== undefined) {
+            updates.push(`geolocation_consent = $${updates.length + 1}`);
+            values.push(geolocation_consent);
+        }
+
+        if (updates.length === 0) {
+            throw new BadRequestError("No fields to update");
+        }
+
+        values.push(userId);
+
+        const { rows } = await pgClient.query(
+            `UPDATE users SET ${updates.join(', ')} WHERE id = $${values.length}
+            RETURNING id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled;`,
+            values
+        );
+
+        if (rows.length === 0) {
+            throw new NotFoundError();
+        }
+
+        return rows[0] as User;
     }
 }
