@@ -107,7 +107,7 @@
 - [x] **GET /users/{user_id}** - Get specific user
   - Requires: Admin or instructor (for enrolled students)
 
-- [ ] **PATCH /users/{user_id}** - Update user (admin only)
+- [x] **PATCH /users/{user_id}** - Update user (admin only)
   - Allow: role, is_active
   - Requires: Admin role
 
@@ -209,7 +209,7 @@
   - Requires: Instructor/Admin role
 
 ### Devices Endpoints (2 remaining)
-- [ ] **DELETE /devices/{device_id}** - Remove device
+- [x] **DELETE /devices/{device_id}** - Remove device
   - Requires: Owner or Admin
 
 - [ ] **PATCH /devices/{device_id}** - Update device
