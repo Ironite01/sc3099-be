@@ -2,7 +2,7 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
 import { NotFoundError } from "../model/error.js";
-import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
+import { USER_ROLE_TYPES, UserModel, type User } from "../model/user.js";
 
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
@@ -16,7 +16,7 @@ async function userController(fastify: FastifyInstance) {
                         is_active: { type: "boolean" },
                         search: { type: "string" },
                         role: { type: "string", enum: Object.values(USER_ROLE_TYPES) },
-                        limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+                        limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
                         offset: { type: "integer", minimum: 0, default: 0 }
                     }
                 }

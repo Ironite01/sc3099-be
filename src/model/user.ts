@@ -38,29 +38,42 @@ export const UserModel = {
 
         const conditions: string[] = [];
         const values: any[] = [];
+        let paramIndex = 1;
 
         if (role) {
-            conditions.push(`role = $${conditions.length + 1}`);
+            conditions.push(`role = $${paramIndex}`);
             values.push(role);
+            paramIndex++;
         }
         if (is_active !== undefined) {
-            conditions.push(`is_active = $${conditions.length + 1}`);
+            conditions.push(`is_active = $${paramIndex}`);
             values.push(is_active);
+            paramIndex++;
         }
         if (search) {
-            conditions.push(`(email ILIKE $${conditions.length + 1} OR full_name ILIKE $${conditions.length + 1})`);
+            conditions.push(`(email ILIKE $${paramIndex} OR full_name ILIKE $${paramIndex + 1})`);
             values.push(`%${search}%`);
+            values.push(`%${search}%`);
+            paramIndex += 2;
         }
+
+        const countResult = await pgClient.query(`SELECT COUNT(*) as count FROM users ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}`, values);
+        const total = parseInt(countResult.rows[0].count);
 
         const { rows } = await pgClient.query(
             `SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled FROM users
             ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
-            LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
             `,
-            [...values, limit || 20, offset || 0]
+            [...values, limit || 50, offset || 0]
         );
 
-        return rows as User[];
+        return {
+            items: rows as User[],
+            total,
+            limit: limit || 50,
+            offset: offset || 0
+        };
     },
     getById: async function getById(pgClient: any, id: string) {
         const { rows } = await pgClient.query(
