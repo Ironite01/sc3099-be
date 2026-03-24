@@ -33,6 +33,35 @@ export type User = {
 };
 
 export const UserModel = {
+    getByFilteredUsers: async function getByFilteredUsers(pgClient: any, filters: Partial<{ role: string, search: string, is_active: boolean, limit: number, offset: number }>) {
+        const { role, is_active, limit, offset, search } = filters;
+
+        const conditions: string[] = [];
+        const values: any[] = [];
+
+        if (role) {
+            conditions.push(`role = $${conditions.length + 1}`);
+            values.push(role);
+        }
+        if (is_active !== undefined) {
+            conditions.push(`is_active = $${conditions.length + 1}`);
+            values.push(is_active);
+        }
+        if (search) {
+            conditions.push(`(email ILIKE $${conditions.length + 1} OR full_name ILIKE $${conditions.length + 1})`);
+            values.push(`%${search}%`);
+        }
+
+        const { rows } = await pgClient.query(
+            `SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled FROM users
+            ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
+            LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+            `,
+            [...values, limit || 20, offset || 0]
+        );
+
+        return rows as User[];
+    },
     getById: async function getById(pgClient: any, id: string) {
         const { rows } = await pgClient.query(
             'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled FROM users WHERE id = $1',

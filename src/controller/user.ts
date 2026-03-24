@@ -2,10 +2,36 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
 import { NotFoundError } from "../model/error.js";
-import { UserModel } from "../model/user.js";
+import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
 
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
+
+    fastify.get(uri,
+        {
+            schema: {
+                querystring: {
+                    type: "object",
+                    properties: {
+                        is_active: { type: "boolean" },
+                        search: { type: "string" },
+                        role: { type: "string", enum: Object.values(USER_ROLE_TYPES) },
+                        limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+                        offset: { type: "integer", minimum: 0, default: 0 }
+                    }
+                }
+            },
+            preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])]
+        },
+        async (req: FastifyRequest, res: FastifyReply) => {
+            const pgClient = await fastify.pg.connect();
+            try {
+                const data = await UserModel.getByFilteredUsers(pgClient, req.query as any);
+                res.status(200).send(data);
+            } finally {
+                pgClient.release();
+            }
+        });
 
     fastify.get(`${uri}/me`, { preHandler: [fastify.authorize()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
