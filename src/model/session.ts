@@ -1,6 +1,4 @@
-import type { PoolClient } from 'pg';
-import { v4 as uuidv4 } from 'uuid';
-import { NotFoundError, BadRequestError } from './error.js';
+import { NotFoundError, BadRequestError, AppError } from './error.js';
 
 export enum SESSION_STATUS {
     SCHEDULED = 'scheduled',
@@ -45,14 +43,19 @@ export type Session = {
 
 export const SessionModel = {
     getById: async function (pgClient: any, id: string): Promise<Session> {
-        const { rows } = await pgClient.query(
-            `SELECT * FROM sessions WHERE id = $1`,
-            [id]
-        );
-        if (rows.length === 0) {
-            throw new NotFoundError();
+        try {
+            const { rows } = await pgClient.query(
+                `SELECT * FROM sessions WHERE id = $1`,
+                [id]
+            );
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+            return rows[0] as Session;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
-        return rows[0] as Session;
     },
     getActiveSessions: async function (pgClient: any, params: {
         course_id?: string,
@@ -62,39 +65,40 @@ export const SessionModel = {
         limit: number,
         offset: number
     }): Promise<(Session & { course_code: string })[]> {
-        const { course_id, instructor_id, start_date, end_date, limit, offset } = params;
+        try {
+            const { course_id, instructor_id, start_date, end_date, limit, offset } = params;
 
-        const filters: string[] = ['status = $1'];
-        const values: any[] = [SESSION_STATUS.ACTIVE];
+            const filters: string[] = ['status = $1'];
+            const values: any[] = [SESSION_STATUS.ACTIVE];
 
-        if (course_id) {
-            filters.push(`course_id = $${filters.length + 1}`);
-            values.push(course_id);
-        }
-        if (instructor_id) {
-            filters.push(`instructor_id = $${filters.length + 1}`);
-            values.push(instructor_id);
-        }
-        if (start_date) {
-            if (isNaN(Date.parse(start_date))) {
-                throw new BadRequestError('Invalid start_date format');
+            if (course_id) {
+                filters.push(`course_id = $${filters.length + 1}`);
+                values.push(course_id);
             }
-            filters.push(`scheduled_start >= $${filters.length + 1}`);
-            values.push(start_date);
-        }
-        if (end_date) {
-            if (isNaN(Date.parse(end_date))) {
-                throw new BadRequestError('Invalid end_date format');
+            if (instructor_id) {
+                filters.push(`instructor_id = $${filters.length + 1}`);
+                values.push(instructor_id);
             }
-            filters.push(`scheduled_end <= $${filters.length + 1}`);
-            values.push(end_date);
-        }
-        if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
-            throw new BadRequestError('start_date cannot be after end_date');
-        }
+            if (start_date) {
+                if (isNaN(Date.parse(start_date))) {
+                    throw new BadRequestError('Invalid start_date format');
+                }
+                filters.push(`scheduled_start >= $${filters.length + 1}`);
+                values.push(start_date);
+            }
+            if (end_date) {
+                if (isNaN(Date.parse(end_date))) {
+                    throw new BadRequestError('Invalid end_date format');
+                }
+                filters.push(`scheduled_end <= $${filters.length + 1}`);
+                values.push(end_date);
+            }
+            if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
+                throw new BadRequestError('start_date cannot be after end_date');
+            }
 
-        const { rows } = await pgClient.query(
-            `SELECT s.id, s.course_id, s.name, s.status, s.scheduled_start,
+            const { rows } = await pgClient.query(
+                `SELECT s.id, s.course_id, s.name, s.status, s.scheduled_start,
             s.scheduled_end, s.checkin_opens_at, s.checkin_closes_at, s.venue_name,
             s.venue_latitude, s.venue_longitude, c.code AS course_code
             FROM sessions s 
@@ -103,8 +107,12 @@ export const SessionModel = {
             WHERE ${filters.join(' AND ')} 
             LIMIT $${filters.length + 1}
             OFFSET $${filters.length + 2}`,
-            [...values, limit, offset]
-        );
-        return rows as ({ course_code: string } & Session)[];
+                [...values, limit, offset]
+            );
+            return rows as ({ course_code: string } & Session)[];
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     }
-};
+}

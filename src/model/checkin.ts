@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
-import { BadRequestError } from './error.js';
+import { AppError, BadRequestError } from './error.js';
 import { DeviceModel } from './device.js';
 import { SESSION_STATUS, SessionModel } from './session.js';
 import { DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
@@ -149,10 +149,11 @@ export const CheckinModel = {
 
             return rows[0] as Checkin;
         } catch (err: any) {
+            if (err instanceof AppError) throw err;
             if (err.code === '23505') {
                 throw new BadRequestError('Student has already checked in for this session');
             }
-            throw err;
+            throw new BadRequestError('Database operation failed');
         }
     }
 };

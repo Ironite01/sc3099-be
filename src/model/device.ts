@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
-import { BadRequestError, NotFoundError, ForbiddenError } from './error.js';
+import { AppError, BadRequestError, NotFoundError, ForbiddenError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 import deviceAttestationService from '../services/attestation/index.js';
 
@@ -95,8 +95,9 @@ export const DeviceModel = {
         const trustScore = TRUST_SCORE_TYPES.LOW;
 
         return transact(async (pgClient: PoolClient) => {
-            const { rows } = await pgClient.query(
-                `INSERT INTO devices (
+            try {
+                const { rows } = await pgClient.query(
+                    `INSERT INTO devices (
                 id, user_id, device_fingerprint, device_name, platform, browser, 
                 os_version, app_version, public_key, public_key_created_at,
                 attestation_passed, is_trusted, trust_score, is_emulator, 
@@ -105,55 +106,69 @@ export const DeviceModel = {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             ON CONFLICT (device_fingerprint) DO NOTHING
             RETURNING *`,
-                [
-                    deviceId, userId, device_fingerprint, device_name || null, platform || null,
-                    browser || null, os_version || null, app_version || null, public_key, now,
-                    attestationResult.passed,
-                    false,
-                    trustScore,
-                    attestationResult.isEmulator,
-                    attestationResult.isRootedJailbroken,
-                    now,
-                    now,
-                    0,
-                    true
-                ]
-            );
+                    [
+                        deviceId, userId, device_fingerprint, device_name || null, platform || null,
+                        browser || null, os_version || null, app_version || null, public_key, now,
+                        attestationResult.passed,
+                        false,
+                        trustScore,
+                        attestationResult.isEmulator,
+                        attestationResult.isRootedJailbroken,
+                        now,
+                        now,
+                        0,
+                        true
+                    ]
+                );
 
-            if (rows.length === 0) {
-                throw new BadRequestError('Device fingerprint already registered');
+                if (rows.length === 0) {
+                    throw new BadRequestError('Device fingerprint already registered');
+                }
+
+                const d = rows[0] as Device;
+
+                await pgClient.query(
+                    `UPDATE devices SET is_active = false WHERE user_id = $1 AND is_active = true AND id != $2`,
+                    [userId, d.id]
+                );
+
+                return d;
+            } catch (err: any) {
+                if (err instanceof AppError) throw err;
+                throw new BadRequestError('Database operation failed');
             }
-
-            const d = rows[0] as Device;
-
-            await pgClient.query(
-                `UPDATE devices SET is_active = false WHERE user_id = $1 AND is_active = true AND id != $2`,
-                [userId, d.id]
-            );
-
-            return d;
         });
     },
     getByUserId: async function getByUserId(pgClient: PoolClient, userId: string) {
-        const { rows } = await pgClient.query(
-            `SELECT * FROM devices WHERE user_id = $1 ORDER BY last_seen_at DESC`,
-            [userId]
-        );
+        try {
+            const { rows } = await pgClient.query(
+                `SELECT * FROM devices WHERE user_id = $1 ORDER BY last_seen_at DESC`,
+                [userId]
+            );
 
-        return rows as Device[];
+            return rows as Device[];
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     },
     getByFingerprint: async function getByFingerprint(pgClient: PoolClient, userId: string, fingerprint: string) {
-        // We add an additional userId constraint since a device fingerprint should only belong to a single user
-        const { rows } = await pgClient.query(
-            `SELECT * FROM devices WHERE device_fingerprint = $1 AND user_id = $2`,
-            [fingerprint, userId]
-        );
+        try {
+            // We add an additional userId constraint since a device fingerprint should only belong to a single user
+            const { rows } = await pgClient.query(
+                `SELECT * FROM devices WHERE device_fingerprint = $1 AND user_id = $2`,
+                [fingerprint, userId]
+            );
 
-        if (rows.length === 0) {
-            throw new NotFoundError('Device not found');
+            if (rows.length === 0) {
+                throw new NotFoundError('Device not found');
+            }
+
+            return rows[0] as Device;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
-
-        return rows[0] as Device;
     },
     update: async function update(
         transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>,

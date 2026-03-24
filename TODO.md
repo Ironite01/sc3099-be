@@ -104,7 +104,7 @@
   - Pagination required
   - Requires: Admin role
 
-- [ ] **GET /users/{user_id}** - Get specific user
+- [x] **GET /users/{user_id}** - Get specific user
   - Requires: Admin or instructor (for enrolled students)
 
 - [ ] **PATCH /users/{user_id}** - Update user (admin only)
