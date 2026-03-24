@@ -217,11 +217,11 @@
   - Requires: Owner or Admin
 
 ### Enrollments Endpoints (5 total)
-- [ ] **GET /enrollments/my-enrollments** - Student's course enrollments
+- [x] **GET /enrollments/my-enrollments** - Student's course enrollments
   - Returns: enrolled courses
   - Requires: Student role
 
-- [ ] **GET /enrollments/course/{course_id}** - Students in course
+- [x] **GET /enrollments/course/{course_id}** - Students in course
   - Query params: is_active, search
   - Requires: Instructor/TA role
 
