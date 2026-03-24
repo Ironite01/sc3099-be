@@ -34,7 +34,7 @@ try {
         .register(controller)
         .register(errorHandler);
 
-    await server.listen({ port: (server as any).config.PORT!! }, (err: Error | null, address: string) => {
+    await server.listen({ host: server.config.HOST!!, port: server.config.PORT!! }, (err: Error | null, address: string) => {
         if (err) {
             console.error(err);
             process.exit(1);
