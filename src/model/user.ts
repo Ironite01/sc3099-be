@@ -91,6 +91,23 @@ export const UserModel = {
 
         return user;
     },
+    getEnrolledUserByInstructorId: async function getEnrolledUserByInstructorId(pgClient: any, instructorId: string, studentId: string) {
+        const { rows } = await pgClient.query(
+            `SELECT u.id, u.email, u.full_name, u.role, u.is_active, u.created_at, u.last_login_at, u.camera_consent, u.geolocation_consent, u.face_enrolled
+            FROM users u
+            JOIN sessions s ON s.instructor_id = $1
+            JOIN enrollments e ON e.student_id = u.id AND s.course_id = e.course_id
+            JOIN courses c ON c.id = s.course_id
+            WHERE u.id = $2 AND u.is_active = true`,
+            [instructorId, studentId]
+        );
+
+        if (rows.length === 0) {
+            throw new NotFoundError();
+        }
+
+        return rows[0] as User;
+    },
     create: async function create(pgClient: PoolClient, payload: Partial<User> & { password: string, raw_face_data: string }) {
         const { email, password, full_name, role, raw_face_data } = payload;
 

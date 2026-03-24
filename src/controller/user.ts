@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
-import { NotFoundError } from "../model/error.js";
+import { NotFoundError, UnauthorizedError } from "../model/error.js";
 import { USER_ROLE_TYPES, UserModel, type User } from "../model/user.js";
 
 async function userController(fastify: FastifyInstance) {
@@ -56,6 +56,52 @@ async function userController(fastify: FastifyInstance) {
             pgClient.release();
         }
     });
+
+    fastify.get(`${uri}/:user_id`, {
+        schema: {
+            params: {
+                type: "object",
+                properties: {
+                    user_id: { type: "string", format: 'uuid' }
+                },
+                required: ["user_id"]
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR])]
+    },
+        async (req: FastifyRequest, res: FastifyReply) => {
+            const pgClient = await fastify.pg.connect();
+            try {
+                const requesterUserId = (req?.user as any).sub;
+                const requesterUserRole = (req?.user as any).role;
+
+                const { user_id: requestedUserId } = req?.params as any;
+                if (!requestedUserId) {
+                    throw new NotFoundError();
+                }
+                let user;
+                if (requesterUserRole === USER_ROLE_TYPES.ADMIN) {
+                    user = await UserModel.getById(pgClient, requestedUserId);
+                } else if (requesterUserRole === USER_ROLE_TYPES.INSTRUCTOR) {
+                    user = await UserModel.getEnrolledUserByInstructorId(pgClient, requesterUserId, requestedUserId);
+                } else {
+                    throw new UnauthorizedError();
+                }
+
+                res.status(200).send({
+                    id: user!.id,
+                    email: user!.email,
+                    full_name: user!.full_name,
+                    role: user!.role,
+                    camera_consent: user!.camera_consent,
+                    geolocation_consent: user!.geolocation_consent,
+                    face_enrolled: user!.face_enrolled,
+                    created_at: user!.created_at
+                });
+            } finally {
+                pgClient.release();
+            }
+        });
 
     fastify.put(`${uri}/me`, {
         schema: {
