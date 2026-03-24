@@ -119,6 +119,54 @@ async function auditController(fastify: FastifyInstance) {
             pgClient.release();
         }
     });
+
+    // GET /api/v1/audit/summary  (admin only)
+    fastify.get(`${BASE_URL}/audit/summary`, {
+        schema: {
+            querystring: {
+                type: 'object',
+                properties: {
+                    days: { type: 'integer', minimum: 1, maximum: 365, default: 7 }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const { days = 7 } = req.query as { days?: number };
+
+        const pgClient = await fastify.pg.connect();
+        try {
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+
+            const totalRow = await pgClient.query(
+                `SELECT COUNT(*) AS cnt FROM audit_logs WHERE timestamp >= $1`,
+                [cutoff.toISOString()]
+            );
+
+            const byActionRows = await pgClient.query(
+                `SELECT action, COUNT(*) AS cnt
+                 FROM audit_logs
+                 WHERE timestamp >= $1
+                 GROUP BY action
+                 ORDER BY cnt DESC`,
+                [cutoff.toISOString()]
+            );
+
+            const by_action: Record<string, number> = {};
+            for (const row of byActionRows.rows) {
+                by_action[row.action] = parseInt(row.cnt, 10);
+            }
+
+            res.status(200).send({
+                period_days: days,
+                total_logs: parseInt(totalRow.rows[0].cnt, 10),
+                by_action
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
 }
 
 export default fp(auditController);
