@@ -77,8 +77,6 @@ export const UserModel = {
         return resDb.rows[0] as User;
     },
     login: async function login(pgClient: PoolClient, email: string, passwordClaim: string) {
-        // TODO: Transaction to select user AND update last_login_at
-
         // Query database for user by email
         const { rows } = await pgClient.query(
             'SELECT id, email, full_name, hashed_password, role, is_active, created_at, last_login_at FROM users WHERE email = $1',

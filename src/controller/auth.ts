@@ -29,7 +29,7 @@ async function authController(fastify: FastifyInstance) {
                         type: 'string'
                     }
                 },
-                required: ['email', 'password', 'full_name'],
+                required: ['email', 'password', 'full_name', 'role'],
                 additionalProperties: false
             }
         }
@@ -37,7 +37,7 @@ async function authController(fastify: FastifyInstance) {
         const pgClient = await fastify.pg.connect();
         try {
             const body: any = req.body;
-            const user = await UserModel.create(pgClient, { ...body, role: USER_ROLE_TYPES.STUDENT });
+            const user = await UserModel.create(pgClient, body);
             res.status(201).send({
                 id: user.id,
                 email: user.email,

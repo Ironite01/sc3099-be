@@ -88,9 +88,11 @@ export const DeviceModel = {
             deviceDetectedRooted
         });
 
-        // Create new device with UUID formatted as VARCHAR(36)
         const deviceId = uuidv4();
         const now = new Date();
+
+        // TODO: ML service
+        const trustScore = TRUST_SCORE_TYPES.LOW;
 
         return transact(async (pgClient: PoolClient) => {
             const { rows } = await pgClient.query(
@@ -108,7 +110,7 @@ export const DeviceModel = {
                     browser || null, os_version || null, app_version || null, public_key, now,
                     attestationResult.passed,
                     false,
-                    TRUST_SCORE_TYPES.LOW,
+                    trustScore,
                     attestationResult.isEmulator,
                     attestationResult.isRootedJailbroken,
                     now,
@@ -139,6 +141,19 @@ export const DeviceModel = {
         );
 
         return rows as Device[];
+    },
+    getByFingerprint: async function getByFingerprint(pgClient: PoolClient, userId: string, fingerprint: string) {
+        // We add an additional userId constraint since a device fingerprint should only belong to a single user
+        const { rows } = await pgClient.query(
+            `SELECT * FROM devices WHERE device_fingerprint = $1 AND user_id = $2`,
+            [fingerprint, userId]
+        );
+
+        if (rows.length === 0) {
+            throw new NotFoundError('Device not found');
+        }
+
+        return rows[0] as Device;
     },
     update: async function update(
         transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>,
@@ -223,7 +238,6 @@ export const DeviceModel = {
             throw new ForbiddenError();
         }
     },
-
     delete: async function deleteDevice(pgClient: PoolClient, deviceId: string, userId: string) {
         const result = await pgClient.query(
             'DELETE FROM devices WHERE id = $1 AND user_id = $2 RETURNING id',

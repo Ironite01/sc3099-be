@@ -1,4 +1,4 @@
-import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import statusDefaultMessage from './statusDefaultMessage.json' with { type: 'json' };
 import { AppError } from '../model/error.js';
@@ -36,7 +36,7 @@ function buildValidationType(issue: ValidationIssue) {
     return `value_error.${issue.keyword}`;
 }
 
-function validation(fastify: any) {
+function validation(fastify: FastifyInstance) {
     fastify.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
         if (error.validation) {
             const context = error.validationContext || "body";

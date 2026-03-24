@@ -7,7 +7,7 @@ import { UserModel } from "../model/user.js";
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
 
-    fastify.get(`${uri}/me`, { preHandler: [(fastify as any).authorize()] }, async (req: FastifyRequest, res: FastifyReply) => {
+    fastify.get(`${uri}/me`, { preHandler: [fastify.authorize()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const userId = (req?.user as any).sub;

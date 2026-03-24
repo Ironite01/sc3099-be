@@ -7,7 +7,7 @@ async function deviceController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/devices`;
 
     fastify.post(`${uri}/register`, {
-        preHandler: [(fastify as any).authorize()],
+        preHandler: [fastify.authorize()],
         schema: {
             body: {
                 type: 'object',
@@ -81,7 +81,7 @@ async function deviceController(fastify: FastifyInstance) {
     });
 
     fastify.get(`${uri}/my-devices`, {
-        preHandler: [(fastify as any).authorize()]
+        preHandler: [fastify.authorize()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -109,7 +109,7 @@ async function deviceController(fastify: FastifyInstance) {
 
     // TODO: Update the attestion and trust_score later
     fastify.patch(`${uri}/:device_id`, {
-        preHandler: [(fastify as any).authorize()],
+        preHandler: [fastify.authorize()],
         schema: {
             body: {
                 type: 'object',
@@ -155,7 +155,7 @@ async function deviceController(fastify: FastifyInstance) {
     });
 
     fastify.delete(`${uri}/:device_id`, {
-        preHandler: [(fastify as any).authorize()]
+        preHandler: [fastify.authorize()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {

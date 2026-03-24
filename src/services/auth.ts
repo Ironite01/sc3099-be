@@ -1,16 +1,17 @@
 import fp from 'fastify-plugin';
 import fastifyJwt from '@fastify/jwt';
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { USER_ROLE_HIERARCHY, USER_ROLE_TYPES } from '../model/user.js';
 import { ForbiddenError, UnauthorizedError } from '../model/error.js';
 
 declare module 'fastify' {
     interface FastifyInstance {
-        authorize: (arg: USER_ROLE_TYPES[] | number) => (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+        authorize: (arg?: USER_ROLE_TYPES[] | number) => (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+        config: any;
     }
 }
 
-function auth(fastify: any) {
+function auth(fastify: FastifyInstance) {
     const secret = fastify.config.JWT_SECRET!!;
 
     fastify.register(fastifyJwt, {

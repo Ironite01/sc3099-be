@@ -21,7 +21,7 @@ export type Session = {
     course_id: string;
     instructor_id: string | null;
     name: string;
-    session_type: string; // could be SESSION_TYPE
+    session_type: SESSION_TYPE;
     description?: string;
     scheduled_start: Date;
     scheduled_end: Date;
@@ -54,71 +54,57 @@ export const SessionModel = {
         }
         return rows[0] as Session;
     },
+    getActiveSessions: async function (pgClient: any, params: {
+        course_id?: string,
+        instructor_id?: string,
+        start_date?: string,
+        end_date?: string,
+        limit: number,
+        offset: number
+    }): Promise<(Session & { course_code: string })[]> {
+        const { course_id, instructor_id, start_date, end_date, limit, offset } = params;
 
-    // TODO: Validate if this works
-    create: async function (pgClient: PoolClient, payload: Partial<Session>) {
-        const {
-            course_id,
-            instructor_id,
-            name,
-            session_type,
-            description,
-            scheduled_start,
-            scheduled_end,
-            checkin_opens_at,
-            checkin_closes_at,
-            status,
-            venue_latitude,
-            venue_longitude,
-            venue_name,
-            geofence_radius_meters,
-            require_liveness_check,
-            require_face_match,
-            risk_threshold,
-            qr_code_secret,
-            qr_code_expires_at
-        } = payload as any;
+        const filters: string[] = ['status = $1'];
+        const values: any[] = [SESSION_STATUS.ACTIVE];
 
-        if (!course_id || !name || !scheduled_start || !scheduled_end || !checkin_opens_at || !checkin_closes_at) {
-            throw new BadRequestError('Missing required session fields');
+        if (course_id) {
+            filters.push(`course_id = $${filters.length + 1}`);
+            values.push(course_id);
+        }
+        if (instructor_id) {
+            filters.push(`instructor_id = $${filters.length + 1}`);
+            values.push(instructor_id);
+        }
+        if (start_date) {
+            if (isNaN(Date.parse(start_date))) {
+                throw new BadRequestError('Invalid start_date format');
+            }
+            filters.push(`scheduled_start >= $${filters.length + 1}`);
+            values.push(start_date);
+        }
+        if (end_date) {
+            if (isNaN(Date.parse(end_date))) {
+                throw new BadRequestError('Invalid end_date format');
+            }
+            filters.push(`scheduled_end <= $${filters.length + 1}`);
+            values.push(end_date);
+        }
+        if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
+            throw new BadRequestError('start_date cannot be after end_date');
         }
 
-        const now = new Date();
-        const res = await pgClient.query(
-            `INSERT INTO sessions (
-                id, course_id, instructor_id, name, session_type, description,
-                scheduled_start, scheduled_end, checkin_opens_at, checkin_closes_at,
-                status, venue_latitude, venue_longitude, venue_name,
-                geofence_radius_meters, require_liveness_check, require_face_match,
-                risk_threshold, qr_code_secret, qr_code_expires_at,
-                created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-            RETURNING *`,
-            [
-                uuidv4(),
-                course_id,
-                instructor_id,
-                name,
-                session_type || SESSION_TYPE.OTHER,
-                description,
-                scheduled_start,
-                scheduled_end,
-                checkin_opens_at,
-                checkin_closes_at,
-                status || SESSION_STATUS.SCHEDULED,
-                venue_latitude,
-                venue_longitude,
-                venue_name,
-                geofence_radius_meters,
-                require_liveness_check,
-                require_face_match,
-                risk_threshold,
-                qr_code_secret,
-                qr_code_expires_at,
-                now,
-                now
-            ]
+        const { rows } = await pgClient.query(
+            `SELECT s.id, s.course_id, s.name, s.status, s.scheduled_start,
+            s.scheduled_end, s.checkin_opens_at, s.checkin_closes_at, s.venue_name,
+            s.venue_latitude, s.venue_longitude, c.code AS course_code
+            FROM sessions s 
+            INNER JOIN courses c 
+            ON s.course_id = c.id 
+            WHERE ${filters.join(' AND ')} 
+            LIMIT $${filters.length + 1}
+            OFFSET $${filters.length + 2}`,
+            [...values, limit, offset]
         );
-        return res.rows[0] as Session;
+        return rows as ({ course_code: string } & Session)[];
     }
 };

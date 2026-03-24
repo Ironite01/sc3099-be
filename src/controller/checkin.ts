@@ -1,10 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { BASE_URL, DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
+import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
-import { BadRequestError, UnauthorizedError } from '../model/error.js';
-import haversineDistance from '../helpers/haversineDistance.js';
-import { SESSION_STATUS, SessionModel } from '../model/session.js';
 import { CheckinModel } from '../model/checkin.js';
 
 async function checkinController(fastify: FastifyInstance) {
@@ -23,7 +20,7 @@ async function checkinController(fastify: FastifyInstance) {
                     liveness_challenge_response: { type: 'string' },
                     qr_code: { type: 'string' }
                 },
-                required: ['session_id', 'latitude', 'longitude'],
+                required: ['session_id', 'latitude', 'longitude', 'location_accuracy_meters', 'device_fingerprint'],
                 additionalProperties: false
             }
         },
@@ -31,48 +28,17 @@ async function checkinController(fastify: FastifyInstance) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const { session_id, latitude, longitude } = req.body as any;
-            const studentId = (req.user as any)?.sub;
-            if (!studentId) {
-                throw new UnauthorizedError();
-            }
+            const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response, qr_code } = req.body as any;
+            const userId = (req.user as any)?.sub;
 
-            const session = await SessionModel.getById(pgClient, session_id);
-            const venueLat = session.venue_latitude; // e.g. SMU
-            const venueLon = session.venue_longitude;
-            const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
-
-            if (session.status !== SESSION_STATUS.ACTIVE) {
-                throw new BadRequestError('Session not active');
-            }
-
-            const now = new Date();
-            if (now < new Date(session.checkin_opens_at) || now > new Date(session.checkin_closes_at)) {
-                throw new BadRequestError('Check-in window closed');
-            }
-
-            if (!venueLat || !venueLon) {
-                throw new BadRequestError('Session does not have a valid venue location');
-            }
-
-            const distance = haversineDistance(latitude, longitude, venueLat, venueLon);
-            if (distance > geofenceRadius) {
-                throw new BadRequestError('Location is outside the permitted geofence');
-            }
-
-            // TODO: Add the checkin
-            // TODO: Get from Redis or ML side the risk and liveness
-
-            const checkin = await CheckinModel.create(pgClient, {
+            const checkin = await CheckinModel.create(pgClient, userId, {
                 session_id,
-                student_id: studentId,
                 latitude,
                 longitude,
-                distance_from_venue_meters: distance,
-                liveness_passed: false,
-                liveness_score: null,
-                risk_score: null,
-                risk_factors: []
+                location_accuracy_meters,
+                device_fingerprint,
+                liveness_challenge_response,
+                qr_code
             });
 
             res.status(201).send({
