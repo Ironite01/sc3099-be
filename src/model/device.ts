@@ -181,7 +181,7 @@ export const DeviceModel = {
         }
     ) {
         const userId = user.sub;
-        const userRole = user.role;
+        const userRole = user.role.toLowerCase();
         let { device_name, is_trusted, is_active } = payload;
 
         const deRegisterDevices = async (pgClient: PoolClient, newDeviceId: string) => {

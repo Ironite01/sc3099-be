@@ -42,8 +42,11 @@ export const UserModel = {
             let paramIndex = 1;
 
             if (role) {
+                if (!Object.values(USER_ROLE_TYPES).includes(role.toLowerCase() as USER_ROLE_TYPES)) {
+                    throw new BadRequestError("Invalid role filter");
+                }
                 conditions.push(`role = $${paramIndex}`);
-                values.push(role);
+                values.push(role.toLowerCase());
                 paramIndex++;
             }
             if (is_active !== undefined) {
@@ -214,6 +217,46 @@ export const UserModel = {
             if (geolocation_consent !== undefined) {
                 updates.push(`geolocation_consent = $${updates.length + 1}`);
                 values.push(geolocation_consent);
+            }
+
+            if (updates.length === 0) {
+                throw new BadRequestError("No fields to update");
+            }
+
+            values.push(userId);
+
+            const { rows } = await pgClient.query(
+                `UPDATE users SET ${updates.join(', ')} WHERE id = $${values.length}
+                RETURNING id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled;`,
+                values
+            );
+
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+
+            return rows[0] as User;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    patchUserById: async function patchUserById(pgClient: PoolClient, userId: string, payload: Partial<{ is_active: boolean, role: string }>) {
+        try {
+            const { is_active, role } = payload;
+
+            const updates: string[] = [];
+            const values: any[] = [];
+            if (is_active !== undefined) {
+                updates.push(`is_active = $${updates.length + 1}`);
+                values.push(Boolean(is_active));
+            }
+            if (role !== undefined) {
+                if (!Object.values(USER_ROLE_TYPES).includes(role.toLowerCase() as USER_ROLE_TYPES)) {
+                    throw new BadRequestError("Invalid role");
+                }
+                updates.push(`role = $${updates.length + 1}`);
+                values.push(role.toLowerCase());
             }
 
             if (updates.length === 0) {
