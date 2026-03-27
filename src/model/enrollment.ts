@@ -1,4 +1,5 @@
 import { AppError, BadRequestError, NotFoundError } from "./error.js";
+import { USER_ROLE_TYPES } from "./user.js";
 
 export type Enrollment = {
     id: string;
@@ -79,6 +80,45 @@ export const EnrollmentModel = {
                 total_enrolled: totalEnrolled,
                 students: rows as (Enrollment & { student_name: string, student_email: string, face_enrolled: boolean })[] || []
             };
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    create: async (pgClient: any, user: { role: USER_ROLE_TYPES, id: string }, payload: { studentId: string, courseId: string }): Promise<Enrollment> => {
+        try {
+            const { studentId, courseId } = payload;
+            if (!studentId || !courseId) {
+                throw new NotFoundError();
+            }
+
+            // TODO: Check if course is active
+
+            // We only allow instructor to enroll students into his own course
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                const instructorInCourse = await pgClient.query(
+                    `SELECT 1 FROM sessions s WHERE s.course_id = $1 AND s.instructor_id = $2`,
+                    [courseId, user.id]
+                );
+                if (instructorInCourse.rowCount === 0) {
+                    throw new NotFoundError();
+                }
+            }
+
+            const existingEnrollmentResult = await pgClient.query(
+                `SELECT 1 FROM enrollments WHERE student_id = $1 AND course_id = $2 AND is_active = true`,
+                [studentId, courseId]
+            );
+            if (existingEnrollmentResult.rowCount > 0) {
+                throw new BadRequestError('Student is already enrolled in this course');
+            }
+
+            const { rows } = await pgClient.query(
+                `INSERT INTO enrollments (student_id, course_id, is_active, enrolled_at) VALUES ($1, $2, true, NOW()) RETURNING id, student_id, course_id, is_active, enrolled_at`,
+                [studentId, courseId]
+            );
+
+            return rows[0] as Enrollment;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');

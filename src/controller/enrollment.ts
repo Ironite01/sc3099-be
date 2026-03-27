@@ -76,6 +76,39 @@ function enrollmentController(fastify: FastifyInstance) {
             }
         });
 
+    fastify.post(uri, {
+        schema: {
+            body: {
+                type: "object",
+                properties: {
+                    student_id: { type: "string" },
+                    course_id: { type: "string" }
+                },
+                required: ["student_id", "course_id"]
+            }
+        },
+        preHandler: fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userId = (req.user as any)?.sub;
+            const userRole = (req.user as any)?.role;
+            const { student_id, course_id } = req.body as { student_id: string, course_id: string };
+
+            const enrollment = await EnrollmentModel.create(pgClient, { id: userId, role: userRole }, { studentId: student_id, courseId: course_id });
+
+            res.status(201).send({
+                id: enrollment.id,
+                student_id: enrollment.student_id,
+                course_id: enrollment.course_id,
+                enrolled_at: enrollment.enrolled_at,
+                is_active: enrollment.is_active
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
+
     // POST /api/v1/admin/enrollments/
     fastify.post(`${BASE_URL}/admin/enrollments/`, {
         schema: {

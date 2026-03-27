@@ -225,7 +225,7 @@
   - Query params: is_active, search
   - Requires: Instructor/TA role
 
-- [ ] **POST /enrollments/** - Enroll student in course
+- [x] **POST /enrollments/** - Enroll student in course
   - Request: student_id, course_id
   - Requires: Instructor or Admin
 
