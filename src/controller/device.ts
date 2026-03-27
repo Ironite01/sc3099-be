@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
 import { DeviceModel, PLATFORM_TYPES } from "../model/device.js";
 import { USER_ROLE_TYPES } from "../model/user.js";
-import { deviceRegistrationTotal } from '../services/metrics.js';
+// import { deviceRegistrationTotal } from '../services/metrics.js';
 
 async function deviceController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/devices`;
@@ -204,7 +204,7 @@ async function deviceController(fastify: FastifyInstance) {
             );
 
             res.status(201).send(result.rows[0]);
-            deviceRegistrationTotal.inc();
+            // deviceRegistrationTotal.inc();
         } catch (err: any) {
             if (err.code === '23505' && err.constraint === 'devices_device_fingerprint_key') {
                 res.status(409).send({ message: 'Device already registered to another account. Please unbind first.' });

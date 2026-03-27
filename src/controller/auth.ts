@@ -3,7 +3,7 @@ import fp from 'fastify-plugin';
 import { USER_ROLE_TYPES, UserModel } from '../model/user.js';
 import { ACCESS_TOKEN_TTL, BASE_URL, REFRESH_TOKEN_TTL } from '../helpers/constants.js';
 import { UnauthorizedError } from '../model/error.js';
-import { loginTotal, registrationTotal } from '../services/metrics.js';
+// import { loginTotal, registrationTotal } from '../services/metrics.js';
 
 async function authController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/auth`;
@@ -46,7 +46,7 @@ async function authController(fastify: FastifyInstance) {
             const role = (body.role) as USER_ROLE_TYPES;
             const user = await UserModel.create(pgClient, { ...body, role });
 
-            registrationTotal.inc({ role });
+            // registrationTotal.inc({ role });
 
             res.status(201).send({
                 id: user.id,
@@ -84,9 +84,9 @@ async function authController(fastify: FastifyInstance) {
             let user: any;
             try {
                 user = await UserModel.login(pgClient, email, passwordClaim);
-                loginTotal.inc({ status: 'success' });
+                // loginTotal.inc({ status: 'success' });
             } catch (err) {
-                loginTotal.inc({ status: 'failure' });
+                // loginTotal.inc({ status: 'failure' });
                 throw err;
             }
 

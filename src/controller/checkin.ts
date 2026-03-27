@@ -1,13 +1,10 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { BASE_URL, DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
+import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from '../model/error.js';
-import haversineDistance from '../helpers/haversineDistance.js';
-import { SESSION_STATUS, SessionModel } from '../model/session.js';
-import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
-import { checkinTotal, riskScoreHistogram, checkinDistanceHistogram } from '../services/metrics.js';
+import { CheckinModel } from '../model/checkin.js';
 
 function normalizeRiskFactors(value: any): any[] {
     if (Array.isArray(value)) return value;
@@ -72,56 +69,61 @@ function secureEqualsHex(a: string, b: string): boolean {
     }
 }
 
-async function ensureCheckinTimezoneColumn(fastify: FastifyInstance): Promise<void> {
-    const pgClient = await fastify.pg.connect();
-    try {
-        const result = await pgClient.query(
-            `SELECT data_type
-             FROM information_schema.columns
-             WHERE table_schema = 'public'
-               AND table_name = 'checkins'
-               AND column_name = 'checked_in_at'`
-        );
-
-        const dataType = result.rows[0]?.data_type as string | undefined;
-        if (dataType !== 'timestamp without time zone') {
-            // Continue to sanity-fix legacy rows that may have been written 8h ahead.
-            const driftFix = await pgClient.query(
-                `UPDATE checkins
-                 SET checked_in_at = checked_in_at - INTERVAL '8 hours'
-                 WHERE checked_in_at > NOW() + INTERVAL '2 hours'`
-            );
-            if ((driftFix.rowCount ?? 0) > 0) {
-                fastify.log.warn(`[checkins] Corrected ${(driftFix.rowCount ?? 0)} future-drifted check-in timestamps (-8h).`);
-            }
-            return;
-        }
-
-        // Legacy DBs may have checkins.checked_in_at as timestamp (without timezone).
-        // Interpret existing stored values as UTC and migrate to TIMESTAMPTZ once.
-        await pgClient.query(
-            `ALTER TABLE checkins
-             ALTER COLUMN checked_in_at TYPE TIMESTAMPTZ
-             USING checked_in_at AT TIME ZONE 'UTC'`
-        );
-
-        const driftFix = await pgClient.query(
-            `UPDATE checkins
-             SET checked_in_at = checked_in_at - INTERVAL '8 hours'
-             WHERE checked_in_at > NOW() + INTERVAL '2 hours'`
-        );
-        if ((driftFix.rowCount ?? 0) > 0) {
-            fastify.log.warn(`[checkins] Corrected ${(driftFix.rowCount ?? 0)} future-drifted check-in timestamps (-8h).`);
-        }
-    } finally {
-        pgClient.release();
-    }
-}
-
 async function checkinController(fastify: FastifyInstance) {
-    await ensureCheckinTimezoneColumn(fastify);
-
     const uri = `${BASE_URL}/checkins`;
+
+    fastify.post(uri, {
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    session_id: { type: 'string', format: 'uuid' },
+                    latitude: { type: 'number' },
+                    longitude: { type: 'number' },
+                    location_accuracy_meters: { type: 'number' },
+                    device_fingerprint: { type: 'string' },
+                    liveness_challenge_response: { type: 'string' },
+                    qr_code: { type: 'string' }
+                },
+                required: ['session_id', 'latitude', 'longitude', 'location_accuracy_meters', 'device_fingerprint'],
+                additionalProperties: false
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response, qr_code } = req.body as any;
+            const userId = (req.user as any)?.sub;
+
+            const checkin = await CheckinModel.create(pgClient, userId, {
+                session_id,
+                latitude,
+                longitude,
+                location_accuracy_meters,
+                device_fingerprint,
+                liveness_challenge_response,
+                qr_code
+            });
+
+            res.status(201).send({
+                id: checkin.id,
+                session_id: checkin.session_id,
+                student_id: checkin.student_id,
+                status: checkin.status,
+                checked_in_at: checkin.checked_in_at,
+                latitude: checkin.latitude,
+                longitude: checkin.longitude,
+                distance_from_venue_meters: checkin.distance_from_venue_meters,
+                liveness_passed: checkin.liveness_passed,
+                liveness_score: checkin.liveness_score,
+                risk_score: checkin.risk_score,
+                risk_factors: checkin.risk_factors
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
 
     fastify.get(`${uri}/`, {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])],
@@ -594,235 +596,6 @@ async function checkinController(fastify: FastifyInstance) {
             const { sessionId } = req.params as { sessionId: string };
             const checkins = await CheckinModel.listBySession(pgClient, sessionId);
             res.status(200).send(checkins);
-        } finally {
-            pgClient.release();
-        }
-    });
-
-    fastify.post(uri, {
-        schema: {
-            body: {
-                type: 'object',
-                properties: {
-                    session_id: { type: 'string', format: 'uuid' },
-                    latitude: { type: 'number' },
-                    longitude: { type: 'number' },
-                    location_accuracy_meters: { type: 'number' },
-                    device_fingerprint: { type: 'string' },
-                    liveness_challenge_response: { type: 'string' },
-                    qr_code: { type: 'string' }
-                },
-                required: ['session_id', 'latitude', 'longitude'],
-                additionalProperties: false
-            }
-        },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])]
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            await SessionModel.closeExpiredActiveSessions(pgClient);
-
-            const { session_id, latitude, longitude, qr_code, device_fingerprint, liveness_challenge_response } = req.body as any;
-            const studentId = (req.user as any)?.sub;
-            if (!studentId) {
-                throw new UnauthorizedError();
-            }
-
-            const session = await SessionModel.getById(pgClient, session_id);
-            const venueLat = session.venue_latitude; // e.g. SMU
-            const venueLon = session.venue_longitude;
-            const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
-
-            const enrollment = await pgClient.query(
-                `SELECT 1
-                 FROM enrollments
-                 WHERE student_id = $1
-                   AND course_id = $2
-                   AND is_active = TRUE`,
-                [studentId, session.course_id]
-            );
-            if (!enrollment.rows.length) {
-                throw new BadRequestError('Student is not enrolled in this course');
-            }
-
-            if (session.status !== SESSION_STATUS.ACTIVE) {
-                throw new BadRequestError('Session not active');
-            }
-
-            if (session.qr_code_secret) {
-                if (!qr_code || typeof qr_code !== 'string') {
-                    throw new BadRequestError('QR code is required for this session');
-                }
-
-                const parsedQr = parseQrPayload(qr_code);
-                if (!parsedQr || parsedQr.sessionId !== session_id || !Number.isFinite(parsedQr.exp)) {
-                    throw new BadRequestError('Invalid QR code');
-                }
-
-                if (Date.now() > parsedQr.exp) {
-                    throw new BadRequestError('QR code expired');
-                }
-
-                const expectedSig = signQrPayload(session_id, parsedQr.exp, session.qr_code_secret);
-                if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
-                    throw new BadRequestError('Invalid QR code');
-                }
-            }
-
-            const now = new Date();
-            if (now < new Date(session.checkin_opens_at) || now > new Date(session.checkin_closes_at)) {
-                throw new BadRequestError('Check-in window closed');
-            }
-
-            if (!venueLat || !venueLon) {
-                throw new BadRequestError('Session does not have a valid venue location');
-            }
-
-            const distance = haversineDistance(latitude, longitude, venueLat, venueLon);
-            // Only hard-reject at 2x geofence radius (per spec: GPS > 2x geofence -> rejected).
-            // Distances between 1x and 2x are allowed through but will receive a higher
-            // geo risk score, likely resulting in the check-in being flagged for review.
-            if (distance > geofenceRadius * 2) {
-                throw new BadRequestError('Location is outside the permitted geofence');
-            }
-
-            // -- Device binding enforcement --
-            const courseResult = await pgClient.query(
-                `SELECT require_device_binding, risk_threshold FROM courses WHERE id = $1`,
-                [session.course_id]
-            );
-            const course = courseResult.rows[0];
-            const requireDeviceBinding: boolean = course?.require_device_binding ?? true;
-            const riskThreshold: number = course?.risk_threshold ?? 0.5;
-
-            let deviceRecord: { id: string; is_trusted: boolean; trust_score: string; is_active: boolean } | null = null;
-            if (device_fingerprint) {
-                const deviceQuery = await pgClient.query(
-                    `SELECT id, is_trusted, trust_score, is_active
-                     FROM devices
-                     WHERE user_id = $1 AND device_fingerprint = $2
-                     LIMIT 1`,
-                    [studentId, device_fingerprint]
-                );
-                deviceRecord = deviceQuery.rows[0] ?? null;
-            }
-
-            if (requireDeviceBinding) {
-                if (!device_fingerprint) {
-                    throw new BadRequestError('Device fingerprint is required for this course');
-                }
-                if (!deviceRecord) {
-                    throw new BadRequestError('Device not registered. Please register your device before checking in.');
-                }
-                if (!deviceRecord.is_active) {
-                    throw new BadRequestError('Your device has been deactivated. Please contact support.');
-                }
-            }
-
-            // -- Liveness / attestation token validation --
-            let livenessPassed = false;
-            let livenessScore: number | null = null;
-            if (liveness_challenge_response && typeof liveness_challenge_response === 'string') {
-                try {
-                    const decoded = Buffer.from(liveness_challenge_response, 'base64').toString('utf8');
-                    const parts = decoded.split('_');
-                    if (parts.length >= 3 && parts[0] === 'liveness') {
-                        const ts = Number(parts[1]);
-                        const tokenAge = Date.now() - ts;
-                        if (Number.isFinite(ts) && tokenAge >= 0 && tokenAge < 600_000 && (parts[2]?.length ?? 0) > 0) {
-                            livenessPassed = true;
-                            livenessScore = 0.75;
-                        }
-                    }
-                } catch {
-                    // Malformed token -- liveness stays false
-                }
-            }
-
-            // -- Risk score calculation --
-            const riskFactors: Record<string, any>[] = [];
-
-            // Geolocation signal (15% weight)
-            const geoRisk = Math.min(distance / geofenceRadius, 1.0) * 0.15;
-            riskFactors.push({ type: 'geolocation', distance_meters: Math.round(distance), geofence_radius: geofenceRadius, weight: parseFloat(geoRisk.toFixed(4)) });
-
-            // Device attestation signal (20% weight)
-            let deviceRisk: number;
-            if (!device_fingerprint) {
-                deviceRisk = 0.20;
-                riskFactors.push({ type: 'device_unknown', severity: 'high', weight: 0.20 });
-            } else if (!deviceRecord) {
-                deviceRisk = 0.20;
-                riskFactors.push({ type: 'device_unregistered', severity: 'high', weight: 0.20 });
-            } else {
-                deviceRisk = deviceRecord.is_trusted ? 0.0 : 0.10;
-                riskFactors.push({ type: 'device_attestation', is_trusted: deviceRecord.is_trusted, trust_score: deviceRecord.trust_score, weight: deviceRisk });
-            }
-
-            // Liveness signal (25% weight)
-            const livenessRisk = livenessPassed ? parseFloat((0.25 * (1 - (livenessScore ?? 0.75))).toFixed(4)) : 0.25;
-            riskFactors.push({ type: 'liveness', passed: livenessPassed, score: livenessScore, weight: livenessRisk });
-
-            // Face match and network (no ML/detection yet)
-            riskFactors.push({ type: 'face_match', passed: false, weight: 0 });
-            riskFactors.push({ type: 'network', weight: 0 });
-
-            const riskScore = parseFloat((geoRisk + deviceRisk + livenessRisk).toFixed(4));
-
-            // -- Determine check-in status --
-            let checkinStatus: CHECKIN_STATUS;
-            if (riskScore < 0.3) {
-                checkinStatus = CHECKIN_STATUS.APPROVED;
-            } else if (riskScore < riskThreshold) {
-                checkinStatus = CHECKIN_STATUS.APPROVED;
-            } else if (riskScore < 0.7) {
-                checkinStatus = CHECKIN_STATUS.FLAGGED;
-            } else {
-                checkinStatus = CHECKIN_STATUS.REJECTED;
-            }
-
-            // -- Update device activity if found --
-            if (deviceRecord) {
-                await pgClient.query(
-                    `UPDATE devices
-                     SET last_seen_at = NOW(), total_checkins = total_checkins + 1, updated_at = NOW()
-                     WHERE id = $1`,
-                    [deviceRecord.id]
-                );
-            }
-
-            const checkin = await CheckinModel.create(pgClient, {
-                session_id,
-                student_id: studentId,
-                latitude,
-                longitude,
-                distance_from_venue_meters: distance,
-                liveness_passed: livenessPassed,
-                liveness_score: livenessScore,
-                risk_score: riskScore,
-                risk_factors: riskFactors,
-                status: checkinStatus
-            });
-
-            // Record Prometheus metrics
-            checkinTotal.inc({ status: checkinStatus });
-            riskScoreHistogram.observe(riskScore);
-            checkinDistanceHistogram.observe(distance);
-
-            res.status(201).send({
-                id: checkin.id,
-                session_id: checkin.session_id,
-                student_id: checkin.student_id,
-                status: checkin.status,
-                checked_in_at: checkin.checked_in_at,
-                latitude: checkin.latitude,
-                longitude: checkin.longitude,
-                distance_from_venue_meters: checkin.distance_from_venue_meters,
-                liveness_passed: checkin.liveness_passed,
-                liveness_score: checkin.liveness_score,
-                risk_score: checkin.risk_score,
-                risk_factors: checkin.risk_factors
-            });
         } finally {
             pgClient.release();
         }

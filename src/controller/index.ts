@@ -29,8 +29,7 @@ async function controller(fastify: FastifyInstance) {
         .register(checkinController)
         .register(statsController)
         .register(auditController)
-        .register(exportController)
-        .register(enrollmentController);
+        .register(exportController);
 }
 
 export default fp(controller);

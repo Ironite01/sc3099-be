@@ -10,7 +10,7 @@ import schemaBootstrap from './services/schema.js';
 import auth from './services/auth.js';
 import cors from './services/cors.js';
 import errorHandler from './services/errorHandler.js';
-import metricsPlugin from './services/metrics.js';
+// import metricsPlugin from './services/metrics.js';
 
 const server = fastify({
     ajv: {
@@ -26,7 +26,7 @@ try {
     console.log('[startup] Registering fastifyEnv...');
     await server.register(fastifyEnv, { schema: envSchema, dotenv: true });
     console.log('[startup] ENV loaded, PORT:', (server as any).config.PORT);
-    
+
     console.log('[startup] Registering plugins...');
     await server
         .register(fastifyMultipart, {
@@ -38,7 +38,7 @@ try {
         .register(schemaBootstrap)
         .register(fastifyFormbody)
         .register(cors)
-        .register(metricsPlugin)
+        // .register(metricsPlugin)
         .register(controller)
         .register(errorHandler);
     console.log('[startup] All plugins registered');
