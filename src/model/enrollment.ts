@@ -1,6 +1,4 @@
-import type { Course } from "./course.js";
 import { AppError, BadRequestError, NotFoundError } from "./error.js";
-import type { Session } from "./session.js";
 
 export type Enrollment = {
     id: string;

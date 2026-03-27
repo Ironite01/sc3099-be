@@ -2,7 +2,7 @@ import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
 import { isStrongPassword } from '../helpers/regex.js';
 import { v4 as uuidv4 } from 'uuid';
-import { AppError, BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
+import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
 
 export enum USER_ROLE_TYPES {

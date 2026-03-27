@@ -1,8 +1,8 @@
 import type { PoolClient } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
-import { AppError, BadRequestError } from './error.js';
-import { DeviceModel } from './device.js';
+import { BadRequestError } from './error.js';
 import { SESSION_STATUS, SessionModel } from './session.js';
+import { DeviceModel } from './device.js';
 import { DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
 import haversineDistance from '../helpers/haversineDistance.js';
 
@@ -18,32 +18,46 @@ export type Checkin = {
     id: string;
     session_id: string;
     student_id: string;
-    device_id?: string;
     status: CHECKIN_STATUS;
     checked_in_at: Date;
-    verified_at?: Date;
-    latitude?: number;
-    longitude?: number;
-    location_accuracy_meters?: number;
-    distance_from_venue_meters?: number;
-    liveness_passed?: boolean;
-    liveness_score?: number;
-    liveness_challenge_type?: string;
-    face_match_passed?: boolean;
-    face_match_score?: number;
-    face_embedding_hash?: string;
-    risk_score: number;
-    risk_factors?: string;
-    qr_code_verified?: boolean;
-    reviewed_by_id?: string;
-    reviewed_at?: Date;
-    review_notes?: string;
-    appeal_reason?: string;
-    appealed_at?: Date;
-    scheduled_deletion_at?: Date;
+    latitude: number;
+    longitude: number;
+    distance_from_venue_meters: number;
+    liveness_passed: boolean;
+    liveness_score: number | null;
+    risk_score: number | null;
+    risk_factors: Record<string, any>[];
 };
 
-// TODO: Appeal, scheduled deletion, review, verify
+export type SessionCheckinRecord = {
+    id: string;
+    student_id: string;
+    student_name: string;
+    student_email: string;
+    status: CHECKIN_STATUS;
+    timestamp: Date;
+    checked_in_at: Date;
+    latitude: number;
+    longitude: number;
+    distance_from_venue_meters: number;
+    liveness_passed: boolean;
+    liveness_score: number | null;
+    risk_score: number | null;
+    risk_factors: Record<string, any>[];
+};
+
+export type StudentCheckinRecord = {
+    id: string;
+    session_id: string;
+    session_name: string;
+    course_id: string;
+    course_code: string;
+    course_name: string;
+    status: CHECKIN_STATUS;
+    checked_in_at: Date;
+    risk_score: number | null;
+};
+
 export const CheckinModel = {
     create: async function performCheckin(
         pgClient: PoolClient,
@@ -149,11 +163,104 @@ export const CheckinModel = {
 
             return rows[0] as Checkin;
         } catch (err: any) {
-            if (err instanceof AppError) throw err;
             if (err.code === '23505') {
                 throw new BadRequestError('Student has already checked in for this session');
             }
-            throw new BadRequestError('Database operation failed');
+            throw err;
         }
+    },
+    listByStudent: async function listByStudent(
+        pgClient: PoolClient,
+        studentId: string,
+        filters: { course_id?: string; limit?: number }
+    ): Promise<StudentCheckinRecord[]> {
+        const { course_id, limit = 50 } = filters;
+        const params: any[] = [studentId];
+        let where = 'WHERE ci.student_id = $1';
+
+        if (course_id) {
+            params.push(course_id);
+            where += ` AND s.course_id = $${params.length}`;
+        }
+
+        params.push(Math.max(1, Math.min(limit, 200)));
+
+        const { rows } = await pgClient.query(
+            `SELECT ci.id,
+                    ci.session_id,
+                    s.name AS session_name,
+                    s.course_id,
+                    c.code AS course_code,
+                    c.name AS course_name,
+                    ci.status,
+                    TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                    ci.risk_score
+             FROM checkins ci
+             JOIN sessions s ON s.id = ci.session_id
+             JOIN courses c ON c.id = s.course_id
+             ${where}
+             ORDER BY ci.checked_in_at DESC
+             LIMIT $${params.length}`,
+            params
+        );
+
+        return rows as StudentCheckinRecord[];
+    },
+
+    listBySession: async function listBySession(
+        pgClient: PoolClient,
+        sessionId: string
+    ): Promise<SessionCheckinRecord[]> {
+        const { rows } = await pgClient.query(
+            `SELECT c.id,
+                    c.student_id,
+                    u.full_name AS student_name,
+                    u.email AS student_email,
+                    c.status,
+                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS timestamp,
+                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                    c.latitude,
+                    c.longitude,
+                    c.distance_from_venue_meters,
+                    c.liveness_passed,
+                    c.liveness_score,
+                    c.risk_score,
+                    c.risk_factors
+             FROM checkins c
+             INNER JOIN users u ON u.id = c.student_id
+             WHERE c.session_id = $1
+             ORDER BY c.checked_in_at DESC`,
+            [sessionId]
+        );
+
+        return rows.map((row) => {
+            const normalizedRiskFactors = Array.isArray(row.risk_factors)
+                ? row.risk_factors
+                : row.risk_factors && typeof row.risk_factors === 'object'
+                    ? [row.risk_factors]
+                    : [];
+
+            return {
+                ...row,
+                risk_factors: normalizedRiskFactors
+            } as SessionCheckinRecord;
+        });
+    },
+
+    getBySessionAndStudent: async function getBySessionAndStudent(
+        pgClient: PoolClient,
+        sessionId: string,
+        studentId: string
+    ): Promise<Checkin | null> {
+        const { rows } = await pgClient.query(
+            `SELECT id, session_id, student_id, status, checked_in_at, latitude, longitude,
+                    distance_from_venue_meters, liveness_passed, liveness_score, risk_score, risk_factors
+             FROM checkins
+             WHERE session_id = $1 AND student_id = $2
+             ORDER BY checked_in_at DESC
+             LIMIT 1`,
+            [sessionId, studentId]
+        );
+        return (rows[0] as Checkin) || null;
     }
 };

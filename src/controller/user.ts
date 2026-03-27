@@ -1,8 +1,10 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { BASE_URL } from "../helpers/constants.js";
-import { NotFoundError, UnauthorizedError } from "../model/error.js";
-import { USER_ROLE_TYPES, UserModel, type User } from "../model/user.js";
+import { BASE_URL, SALT_ROUNDS } from "../helpers/constants.js";
+import { NotFoundError, UnauthorizedError, BadRequestError } from "../model/error.js";
+import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
+import bcrypt from 'bcrypt';
+import { v4 as uuidv4 } from 'uuid';
 
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
@@ -175,6 +177,154 @@ async function userController(fastify: FastifyInstance) {
                 geolocation_consent: user.geolocation_consent,
                 face_enrolled: user.face_enrolled,
                 created_at: user.created_at
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    // TODO: Everything below needs to be refactored and tested accordingly
+    fastify.patch(`${BASE_URL}/admin/users/:user_id/deactivate`, {
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])],
+        schema: {
+            params: {
+                type: 'object',
+                required: ['user_id'],
+                properties: {
+                    user_id: { type: 'string' }
+                }
+            }
+        }
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { user_id } = req.params as { user_id: string };
+            const result = await pgClient.query(
+                `UPDATE users
+                 SET is_active = FALSE, updated_at = NOW()
+                 WHERE id = $1
+                 RETURNING id`,
+                [user_id]
+            );
+
+            if (!result.rows.length) {
+                throw new NotFoundError();
+            }
+
+            res.status(200).send({ id: user_id, is_active: false });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.post(`${BASE_URL}/admin/users/bulk`, {
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])],
+        schema: {
+            body: {
+                type: 'object',
+                required: ['users'],
+                properties: {
+                    users: {
+                        type: 'array',
+                        minItems: 1,
+                        maxItems: 500,
+                        items: {
+                            type: 'object',
+                            required: ['email', 'password', 'full_name', 'role'],
+                            properties: {
+                                email: { type: 'string', format: 'email' },
+                                password: { type: 'string', minLength: 8 },
+                                full_name: { type: 'string', minLength: 2 },
+                                role: {
+                                    type: 'string',
+                                    enum: [
+                                        USER_ROLE_TYPES.STUDENT,
+                                        USER_ROLE_TYPES.TA,
+                                        USER_ROLE_TYPES.INSTRUCTOR,
+                                        USER_ROLE_TYPES.ADMIN
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { users } = req.body as {
+                users: Array<{ email: string; password: string; full_name: string; role: USER_ROLE_TYPES }>;
+            };
+
+            const created: any[] = [];
+            for (const user of users) {
+                const hashed_password = await bcrypt.hash(user.password, SALT_ROUNDS);
+                const result = await pgClient.query(
+                    `INSERT INTO users (
+                        id, email, full_name, hashed_password, role,
+                        is_active, camera_consent, geolocation_consent, face_enrolled,
+                        created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5,
+                        TRUE, FALSE, FALSE, FALSE,
+                        NOW(), NOW()
+                    )
+                    ON CONFLICT (email) DO NOTHING
+                    RETURNING id, email, full_name, role, is_active, created_at`,
+                    [uuidv4(), user.email, user.full_name, hashed_password, user.role]
+                );
+
+                if (result.rows.length) {
+                    created.push(result.rows[0]);
+                }
+            }
+
+            res.status(201).send({
+                users: created,
+                created_count: created.length,
+                requested_count: users.length
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.post(`${uri}/me/face/enroll`, {
+        preHandler: [(fastify as any).authorize()],
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    image: { type: 'string', minLength: 1 }
+                },
+                required: ['image'],
+                additionalProperties: false
+            }
+        }
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userId = (req?.user as any).sub;
+            if (!userId) {
+                throw new NotFoundError();
+            }
+
+            const user = await UserModel.getById(pgClient, userId);
+            if (!user.camera_consent) {
+                throw new BadRequestError('Camera consent required before face enrollment');
+            }
+
+            // Placeholder enrollment flow: mark user as face_enrolled.
+            await pgClient.query(
+                'UPDATE users SET face_enrolled = TRUE, updated_at = NOW() WHERE id = $1',
+                [userId]
+            );
+
+            res.status(200).send({
+                message: 'Face enrolled successfully',
+                face_enrolled: true,
+                quality_score: 0.9
             });
         } finally {
             pgClient.release();

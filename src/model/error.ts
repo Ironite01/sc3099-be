@@ -31,6 +31,12 @@ export class ForbiddenError extends AppError {
     }
 }
 
+export class ConflictError extends AppError {
+    constructor(message = statusDefaultMessage["409"]) {
+        super(message, 409);
+    }
+}
+
 export class NotFoundError extends AppError {
     constructor(message = statusDefaultMessage["404"]) {
         super(message, 404);
