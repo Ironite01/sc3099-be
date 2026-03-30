@@ -8,7 +8,7 @@ import bcrypt from "bcrypt";
 function enrollmentController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/enrollments`;
 
-    fastify.get(`${uri}/my-enrollments`, { preHandler: fastify.authorize([USER_ROLE_TYPES.STUDENT]) }, async (req: FastifyRequest, res: FastifyReply) => {
+    fastify.get(`${uri}/my-enrollments`, { preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const studentId = (req.user as any)?.sub;
@@ -47,7 +47,7 @@ function enrollmentController(fastify: FastifyInstance) {
                     }
                 }
             },
-            preHandler: fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.TA])
+            preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
             const pgClient = await fastify.pg.connect();
@@ -87,7 +87,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 required: ["student_id", "course_id"]
             }
         },
-        preHandler: fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -121,7 +121,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { student_id, course_id } = req.body as { student_id: string; course_id: string };
         const pgClient = await fastify.pg.connect();
@@ -200,7 +200,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const {
             course_id,

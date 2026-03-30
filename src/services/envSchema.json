@@ -4,12 +4,15 @@
         "PORT",
         "FE_PORT",
         "ML_PORT",
+        "ML_HOST",
         "DASHBOARD_PORT",
         "POSTGRES_USERNAME",
         "POSTGRES_PASSWORD",
         "POSTGRES_URI",
         "POSTGRES_DB",
-        "JWT_SECRET"
+        "JWT_SECRET",
+        "REDIS_HOST",
+        "REDIS_PORT"
     ],
     "properties": {
         "PORT": {
@@ -47,6 +50,14 @@
         "JWT_SECRET": {
             "type": "string",
             "default": "your-secret-key-change-this-in-production"
+        },
+        "REDIS_HOST": {
+            "type": "string",
+            "default": "localhost"
+        },
+        "REDIS_PORT": {
+            "type": "string",
+            "default": 6379
         }
     }
 }

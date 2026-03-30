@@ -24,7 +24,7 @@ async function auditController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const {
             user_id, action, resource_type, resource_id,
@@ -130,7 +130,7 @@ async function auditController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { days = 7 } = req.query as { days?: number };
 

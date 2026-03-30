@@ -136,7 +136,7 @@ async function courseController(fastify: any) {
     const baseUri = '/api/v1/courses';
 
     fastify.get(`${baseUri}/available`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -162,7 +162,7 @@ async function courseController(fastify: any) {
     });
 
     fastify.get(`${baseUri}/enrolled`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -183,7 +183,7 @@ async function courseController(fastify: any) {
     });
 
     fastify.post(`${baseUri}/register`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()],
         schema: {
             body: {
                 type: 'object',
@@ -235,7 +235,7 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.get(baseUri + '/', { schema: listCoursesSchema }, async (req: FastifyRequest<{ Querystring: CourseListFilters }>, res: FastifyReply) => {
+    fastify.get(baseUri + '/', { schema: listCoursesSchema, preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest<{ Querystring: CourseListFilters }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const { is_active, semester, limit = 50, offset = 0 } = req.query;
@@ -249,7 +249,7 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.get(baseUri + '/:id', { schema: getCourseSchema }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+    fastify.get(baseUri + '/:id', { schema: getCourseSchema, preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const course = await Course.findById(pgClient, req.params.id);
@@ -266,7 +266,7 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.post(baseUri + '/', { schema: createCourseSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR])] }, async (req: FastifyRequest<{ Body: CourseCreateData }>, res: FastifyReply) => {
+    fastify.post(baseUri + '/', { schema: createCourseSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Body: CourseCreateData }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const course = await Course.create(pgClient, req.body);
@@ -279,7 +279,7 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.put(baseUri + '/:id', { schema: updateCourseSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR])] }, async (req: FastifyRequest<{ Params: { id: string }, Body: CourseUpdateData }>, res: FastifyReply) => {
+    fastify.put(baseUri + '/:id', { schema: updateCourseSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string }, Body: CourseUpdateData }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const course = await Course.update(pgClient, req.params.id, req.body);
@@ -300,7 +300,7 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.delete(baseUri + '/:id', { schema: deleteCourseSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+    fastify.delete(baseUri + '/:id', { schema: deleteCourseSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const deleted = await Course.delete(pgClient, req.params.id);

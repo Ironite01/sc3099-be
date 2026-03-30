@@ -23,7 +23,7 @@ async function userController(fastify: FastifyInstance) {
                     }
                 }
             },
-            preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])]
+            preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
             const pgClient = await fastify.pg.connect();
@@ -35,7 +35,7 @@ async function userController(fastify: FastifyInstance) {
             }
         });
 
-    fastify.get(`${uri}/me`, { preHandler: [fastify.authorize()] }, async (req: FastifyRequest, res: FastifyReply) => {
+    fastify.get(`${uri}/me`, { preHandler: [fastify.authorize(), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const userId = (req?.user as any).sub;
@@ -70,7 +70,7 @@ async function userController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize()]
+        preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -105,7 +105,7 @@ async function userController(fastify: FastifyInstance) {
                 required: ["user_id"]
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     },
         async (req: FastifyRequest, res: FastifyReply) => {
             const pgClient = await fastify.pg.connect();
@@ -158,7 +158,7 @@ async function userController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -185,7 +185,7 @@ async function userController(fastify: FastifyInstance) {
 
     // TODO: Everything below needs to be refactored and tested accordingly
     fastify.patch(`${BASE_URL}/admin/users/:user_id/deactivate`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
         schema: {
             params: {
                 type: 'object',
@@ -218,7 +218,7 @@ async function userController(fastify: FastifyInstance) {
     });
 
     fastify.post(`${BASE_URL}/admin/users/bulk`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
         schema: {
             body: {
                 type: 'object',
@@ -292,7 +292,7 @@ async function userController(fastify: FastifyInstance) {
 
     // Reviewed
     fastify.post(`${uri}/me/face/enroll`, {
-        preHandler: [fastify.authorize()],
+        preHandler: [fastify.authorize(), fastify.rateLimit()],
         schema: {
             body: {
                 type: 'object',

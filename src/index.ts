@@ -10,6 +10,8 @@ import auth from './services/auth.js';
 import cors from './services/cors.js';
 import errorHandler from './services/errorHandler.js';
 import schemaBootstrap from './services/schema.js';
+import redis from './services/redis.js';
+import rateLimiter from './services/rateLimiter.js';
 import { MlServices } from './services/ml/index.js';
 // import metricsPlugin from './services/metrics.js';
 
@@ -30,6 +32,8 @@ try {
             limits: { fileSize: 50 * 1024 * 1024 }
         })
         .register(fastifyCookie)
+        .register(redis)
+        .register(rateLimiter)
         .register(auth)
         .register(pg)
         .register(schemaBootstrap)

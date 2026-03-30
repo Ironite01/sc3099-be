@@ -38,7 +38,12 @@ async function authController(fastify: FastifyInstance) {
                 required: ['email', 'password', 'full_name', 'role'],
                 additionalProperties: false
             }
-        }
+        },
+        preHandler: [fastify.rateLimit({
+            limit: 10,
+            window: 3600,
+            keyGenerator: (req: FastifyRequest) => `rl:register:${req.ip}`
+        })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -76,7 +81,12 @@ async function authController(fastify: FastifyInstance) {
                 },
                 required: ['email', 'password']
             }
-        }
+        },
+        preHandler: [fastify.rateLimit({
+            limit: 60,
+            window: 3600,
+            keyGenerator: (req: FastifyRequest) => `rl:login:${req.ip}`
+        })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -123,7 +133,9 @@ async function authController(fastify: FastifyInstance) {
         }
     });
 
-    fastify.post(`${uri}/refresh`, async (req: FastifyRequest, res: FastifyReply) => {
+    fastify.post(`${uri}/refresh`, {
+        preHandler: [fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const refresh_token: any = req.cookies.refresh_token;
@@ -174,7 +186,7 @@ async function authController(fastify: FastifyInstance) {
     });
 
     // Extra endpoint
-    fastify.post(`${uri}/logout`, async (_req: FastifyRequest, res: FastifyReply) => {
+    fastify.post(`${uri}/logout`, { preHandler: [fastify.rateLimit()] }, async (_req: FastifyRequest, res: FastifyReply) => {
         res.clearCookie('access_token', {
             path: '/',
             httpOnly: true,

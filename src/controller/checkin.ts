@@ -43,50 +43,49 @@ async function checkinController(fastify: FastifyInstance) {
                 additionalProperties: false
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit({
+            limit: 10,
+            window: 60,
+            keyGenerator: (req: FastifyRequest) => `rl:checkin:${(req.user as any)?.sub || req.ip}`
+        })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response, qr_code } = req.body as any;
-            const userId = (req.user as any)?.sub;
-            const ipAddr = req.ip;
-            const userAgent = req.headers['user-agent'];
-            const qrSecret = fastify.config.QR_CODE_SECRET || 'default-qr-secret';
+        const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response, qr_code } = req.body as any;
+        const userId = (req.user as any)?.sub;
+        const ipAddr = req.ip;
+        const userAgent = req.headers['user-agent'];
+        const qrSecret = fastify.config.QR_CODE_SECRET || 'default-qr-secret';
 
-            const u = {
-                ipAddr,
-                session_id,
-                latitude,
-                longitude,
-                location_accuracy_meters,
-                device_fingerprint,
-                liveness_challenge_response,
-                qr_code,
-                qrSecret
-            };
-            const checkin = await CheckinModel.create(pgClient, userId, userAgent ? { ...u, userAgent } : u);
+        const u = {
+            ipAddr,
+            session_id,
+            latitude,
+            longitude,
+            location_accuracy_meters,
+            device_fingerprint,
+            liveness_challenge_response,
+            qr_code,
+            qrSecret
+        };
+        const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
 
-            res.status(201).send({
-                id: checkin.id,
-                session_id: checkin.session_id,
-                student_id: checkin.student_id,
-                status: checkin.status,
-                checked_in_at: checkin.checked_in_at,
-                latitude: checkin.latitude,
-                longitude: checkin.longitude,
-                distance_from_venue_meters: checkin.distance_from_venue_meters,
-                liveness_passed: checkin.liveness_passed,
-                liveness_score: checkin.liveness_score,
-                risk_score: checkin.risk_score,
-                risk_factors: checkin.risk_factors
-            });
-        } finally {
-            pgClient.release();
-        }
+        res.status(201).send({
+            id: checkin.id,
+            session_id: checkin.session_id,
+            student_id: checkin.student_id,
+            status: checkin.status,
+            checked_in_at: checkin.checked_in_at,
+            latitude: checkin.latitude,
+            longitude: checkin.longitude,
+            distance_from_venue_meters: checkin.distance_from_venue_meters,
+            liveness_passed: checkin.liveness_passed,
+            liveness_score: checkin.liveness_score,
+            risk_score: checkin.risk_score,
+            risk_factors: checkin.risk_factors
+        });
     });
 
     fastify.get(`${uri}/`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
         schema: {
             querystring: {
                 type: 'object',
@@ -215,7 +214,7 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const studentId = (req.user as any)?.sub;
         if (!studentId) {
@@ -249,7 +248,7 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const {
             course_id,
@@ -311,7 +310,7 @@ async function checkinController(fastify: FastifyInstance) {
     });
 
     fastify.get(`${uri}/:id`, {
-        preHandler: [fastify.authorize(1)],
+        preHandler: [fastify.authorize(1), fastify.rateLimit()],
         schema: {
             params: {
                 type: 'object',
@@ -362,7 +361,7 @@ async function checkinController(fastify: FastifyInstance) {
     });
 
     fastify.post(`${uri}/:id/appeal`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()],
         schema: {
             params: {
                 type: 'object',
@@ -445,7 +444,7 @@ async function checkinController(fastify: FastifyInstance) {
     });
 
     fastify.post(`${uri}/:id/review`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()],
         schema: {
             params: {
                 type: 'object',
@@ -549,7 +548,7 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {

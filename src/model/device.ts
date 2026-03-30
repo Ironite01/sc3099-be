@@ -91,7 +91,7 @@ export const DeviceModel = {
         const deviceId = uuidv4();
         const now = new Date();
 
-        // TODO: ML service
+        // Default. This will change during the attendance taking flow
         const trustScore = TRUST_SCORE_TYPES.LOW;
 
         return transact(async (pgClient: PoolClient) => {
@@ -104,7 +104,6 @@ export const DeviceModel = {
                 is_rooted_jailbroken, first_seen_at, last_seen_at, total_checkins, is_active
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-            ON CONFLICT (device_fingerprint) DO NOTHING
             RETURNING *`,
                     [
                         deviceId, userId, device_fingerprint, device_name || null, platform || null,
@@ -122,7 +121,7 @@ export const DeviceModel = {
                 );
 
                 if (rows.length === 0) {
-                    throw new BadRequestError('Device fingerprint already registered');
+                    throw new BadRequestError('Failed to register device');
                 }
 
                 const d = rows[0] as Device;
@@ -184,10 +183,10 @@ export const DeviceModel = {
         const userRole = user.role.toLowerCase();
         let { device_name, is_trusted, is_active } = payload;
 
-        const deRegisterDevices = async (pgClient: PoolClient, newDeviceId: string) => {
+        const deRegisterDevices = async (pgClient: PoolClient, studentId: string, newDeviceId: string) => {
             return pgClient.query(
-                `UPDATE devices SET is_active = false WHERE is_active = true AND id != $1`,
-                [newDeviceId]
+                `UPDATE devices SET is_active = false WHERE is_active = true AND id != $1 AND user_id = $2`,
+                [newDeviceId, studentId]
             );
         }
 
@@ -208,7 +207,7 @@ export const DeviceModel = {
                 }
 
                 if (is_active) {
-                    await deRegisterDevices(pgClient, deviceId);
+                    await deRegisterDevices(pgClient, userId, deviceId);
                 }
 
                 return rows[0] as Device;
@@ -242,21 +241,29 @@ export const DeviceModel = {
                     throw new ForbiddenError();
                 }
 
+                const device = rows[0] as Device;
+
                 if (is_active) {
-                    await deRegisterDevices(pgClient, deviceId);
+                    await deRegisterDevices(pgClient, device.user_id, deviceId);
                 }
 
-                return rows[0] as Device;
+                return device;
             });
         }
         else {
             throw new ForbiddenError();
         }
     },
-    delete: async function deleteDevice(pgClient: PoolClient, deviceId: string, userId: string) {
+    delete: async function deleteDevice(pgClient: PoolClient, deviceId: string, user: { userId: string, userRole: string }) {
+        const { userId, userRole } = user;
+
+        if (userRole !== USER_ROLE_TYPES.ADMIN && userRole !== USER_ROLE_TYPES.STUDENT) {
+            throw new ForbiddenError();
+        }
+
         const result = await pgClient.query(
-            'DELETE FROM devices WHERE id = $1 AND user_id = $2 RETURNING id',
-            [deviceId, userId]
+            `DELETE FROM devices WHERE id = $1 ${userRole === USER_ROLE_TYPES.ADMIN ? '' : 'AND user_id = $2'} RETURNING id`,
+            userRole === USER_ROLE_TYPES.ADMIN ? [deviceId] : [deviceId, userId]
         );
 
         // Either error or the user does not own the device
@@ -264,12 +271,11 @@ export const DeviceModel = {
             throw new ForbiddenError();
         }
     },
-    // TODO: Replace this with a transaction within the check-in model
-    incrementCheckinCount: async function incrementCheckinCount(pgClient: PoolClient, deviceId: string) {
+    updateAfterCheckin: async function updateAfterCheckin(pgClient: PoolClient, deviceId: string, riskScore: string) {
         const { rows } = await pgClient.query(
-            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW() 
+            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), risk_score = $3
             WHERE id = $1 RETURNING *`,
-            [deviceId]
+            [deviceId, riskScore]
         );
 
         if (rows.length === 0) {
@@ -278,14 +284,6 @@ export const DeviceModel = {
 
         return rows[0] as Device;
     },
-    // TODO: Can merge with incrementCheckinCount
-    updateLastSeen: async function updateLastSeen(pgClient: PoolClient, deviceId: string) {
-        await pgClient.query(
-            'UPDATE devices SET last_seen_at = NOW() WHERE id = $1',
-            [deviceId]
-        );
-    },
-
     revoke: async function revoke(
         pgClient: PoolClient,
         deviceId: string,

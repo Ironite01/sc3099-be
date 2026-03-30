@@ -287,7 +287,8 @@ async function sessionController(fastify: any) {
                     offset: { type: 'integer', minimum: 0, default: 0 }
                 }
             },
-        }
+        },
+        preHandler: [fastify.rateLimit()]
     },
         async (req: FastifyRequest, res: FastifyReply) => {
             const pgClient = await fastify.pg.connect();
@@ -313,7 +314,7 @@ async function sessionController(fastify: any) {
         });
 
     fastify.get(`${uri}/my-sessions`, {
-        preHandler: [fastify.authorize(1)],
+        preHandler: [fastify.authorize(1), fastify.rateLimit()],
         schema: {
             querystring: {
                 type: 'object',
@@ -388,7 +389,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.get(uri + '/', { schema: listSessionsSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Querystring: any }>, res: FastifyReply) => {
+    fastify.get(uri + '/', { schema: listSessionsSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Querystring: any }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             await maybeCloseExpiredSessions(pgClient);
@@ -405,7 +406,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.get(uri + '/:id', { schema: getSessionSchema, preHandler: [fastify.authorize(1)] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+    fastify.get(uri + '/:id', { schema: getSessionSchema, preHandler: [fastify.authorize(1), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             await maybeCloseExpiredSessions(pgClient);
@@ -424,7 +425,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.post(uri + '/', { schema: createSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
+    fastify.post(uri + '/', { schema: createSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const session = await SessionModel.create(pgClient, req.body);
@@ -437,7 +438,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.patch(uri + '/:id', { schema: updateSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Params: { id: string }, Body: any }>, res: FastifyReply) => {
+    fastify.patch(uri + '/:id', { schema: updateSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string }, Body: any }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const session = await SessionModel.update(pgClient, req.params.id, req.body);
@@ -458,7 +459,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.patch(adminUri + '/:id/status', { schema: updateStatusSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Params: { id: string }, Body: { status: string } }>, res: FastifyReply) => {
+    fastify.patch(adminUri + '/:id/status', { schema: updateStatusSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string }, Body: { status: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             let session = await SessionModel.updateStatus(pgClient, req.params.id, (req.body as any).status);
@@ -485,7 +486,7 @@ async function sessionController(fastify: any) {
     });
 
     fastify.get(adminUri + '/:id/qr', {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
         schema: {
             params: {
                 type: 'object',
@@ -528,7 +529,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.delete(uri + '/:id', { schema: deleteSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+    fastify.delete(uri + '/:id', { schema: deleteSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             await SessionModel.delete(pgClient, req.params.id);

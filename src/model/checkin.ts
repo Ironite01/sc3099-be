@@ -11,6 +11,7 @@ import { UserModel } from './user.js';
 import { isBase64 } from '../helpers/regex.js';
 import { DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
 import { parseQrPayload, secureEqualsHex, signQrPayload } from '../helpers/qr.js';
+import getRiskLevel from '../helpers/getRiskLevels.js';
 
 export enum CHECKIN_STATUS {
     PENDING = 'pending',
@@ -66,7 +67,7 @@ export type StudentCheckinRecord = {
 
 export const CheckinModel = {
     create: async function create(
-        pgClient: PoolClient,
+        transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>,
         studentId: string,
         payload: {
             ipAddr: string;
@@ -105,91 +106,92 @@ export const CheckinModel = {
             throw new BadRequestError('Invalid QR code');
         }
 
-        const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
-        if (!device || !device.is_active || device.revoked_at || !device.is_trusted) {
-            throw new BadRequestError('Device is not allowed for check-in');
-        }
-        const session = await SessionModel.getById(pgClient, session_id);
-        if (!session) {
-            throw new BadRequestError('Session not found');
-        }
-        if (session.status !== SESSION_STATUS.ACTIVE || session.checkin_closes_at < new Date()) {
-            throw new BadRequestError('Session not active');
-        }
-
-        const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
-        if (!enrollment) {
-            throw new BadRequestError('Student is not enrolled in this course');
-        }
-
-        const now = new Date();
-        if (now < new Date(session.checkin_opens_at) || now > new Date(session.checkin_closes_at)) {
-            throw new BadRequestError('Check-in window closed');
-        }
-
-        const venueLat = session.venue_latitude;
-        const venueLon = session.venue_longitude;
-        if (!venueLat || !venueLon) {
-            throw new BadRequestError('Session does not have a valid venue location');
-        }
-
-        const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
-        const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
-
-        const user = await UserModel.getById(pgClient, studentId);
-        if (!user || !user.is_active || !user.face_embedding_hash) {
-            throw new BadRequestError('Unable to perform face verification for user');
-        }
-
-        let status = CHECKIN_STATUS.PENDING;
-        const { liveness_passed, liveness_score, face_embedding_hash } = await MlServices.liveness.check.post({
-            challenge_response: liveness_challenge_response,
-            challenge_type: liveness_challenge_type
-        });
-
-        const { match_passed, match_score } = await MlServices.face.verify.post({
-            image: liveness_challenge_response,
-            reference_template_hash: user.face_embedding_hash
-        });
-
-        const riskFactors: { type: string; weight: number }[] = [];
-        const u = {
-            liveness_score,
-            face_match_score: match_score,
-            device_signature: device.device_fingerprint,
-            device_public_key: device.public_key,
-            ip_address: ipAddr,
-            geolocation: {
-                latitude,
-                longitude,
-                accuracy: location_accuracy_meters
+        return await transact(async (pgClient) => {
+            const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
+            if (!device || !device.is_active || device.revoked_at) {
+                throw new BadRequestError('Device is not allowed for check-in');
             }
-        };
-        const {
-            risk_score, pass_threshold, signal_breakdown, recommendations
-        } = await MlServices.risk.assess.post(userAgent ? {
-            ...u,
-            user_agent: userAgent
-        } : u);
-        const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
-        for (const [key, value] of Object.entries(signalBreakdown)) {
-            riskFactors.push({
-                type: key,
-                weight: Number(value)
+            const session = await SessionModel.getById(pgClient, session_id);
+            if (!session) {
+                throw new BadRequestError('Session not found');
+            }
+            if (session.status !== SESSION_STATUS.ACTIVE || session.checkin_closes_at < new Date()) {
+                throw new BadRequestError('Session not active');
+            }
+
+            const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+            if (!enrollment) {
+                throw new BadRequestError('Student is not enrolled in this course');
+            }
+
+            const now = new Date();
+            if (now < new Date(session.checkin_opens_at) || now > new Date(session.checkin_closes_at)) {
+                throw new BadRequestError('Check-in window closed');
+            }
+
+            const venueLat = session.venue_latitude;
+            const venueLon = session.venue_longitude;
+            if (!venueLat || !venueLon) {
+                throw new BadRequestError('Session does not have a valid venue location');
+            }
+
+            const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
+            const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
+
+            const user = await UserModel.getById(pgClient, studentId);
+            if (!user || !user.is_active || !user.face_embedding_hash) {
+                throw new BadRequestError('Unable to perform face verification for user');
+            }
+
+            let status = CHECKIN_STATUS.PENDING;
+            const { liveness_passed, liveness_score, face_embedding_hash } = await MlServices.liveness.check.post({
+                challenge_response: liveness_challenge_response,
+                challenge_type: liveness_challenge_type
             });
-        }
 
-        if (Boolean(pass_threshold)) {
-            status = CHECKIN_STATUS.FLAGGED;
-        } else if (!liveness_passed || diffDist > geofenceRadius * 2) {
-            status = CHECKIN_STATUS.REJECTED;
-        } else {
-            status = CHECKIN_STATUS.APPROVED;
-        }
+            const { match_passed, match_score } = await MlServices.face.verify.post({
+                image: liveness_challenge_response,
+                reference_template_hash: user.face_embedding_hash
+            });
 
-        try {
-            const { rows } = await pgClient.query(
-                `INSERT INTO checkins (
+            const riskFactors: { type: string; weight: number }[] = [];
+            const u = {
+                liveness_score,
+                face_match_score: match_score,
+                device_signature: device.device_fingerprint,
+                device_public_key: device.public_key,
+                ip_address: ipAddr,
+                geolocation: {
+                    latitude,
+                    longitude,
+                    accuracy: location_accuracy_meters
+                }
+            };
+            const {
+                risk_score, pass_threshold, signal_breakdown, recommendations
+            } = await MlServices.risk.assess.post(userAgent ? {
+                ...u,
+                user_agent: userAgent
+            } : u);
+            const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
+            for (const [key, value] of Object.entries(signalBreakdown)) {
+                riskFactors.push({
+                    type: key,
+                    weight: Number(value)
+                });
+            }
+
+            if (Boolean(pass_threshold)) {
+                status = CHECKIN_STATUS.FLAGGED;
+            } else if (!liveness_passed || diffDist > geofenceRadius * 2) {
+                status = CHECKIN_STATUS.REJECTED;
+            } else {
+                status = CHECKIN_STATUS.APPROVED;
+            }
+
+            try {
+                const { rows } = await pgClient.query(
+                    `INSERT INTO checkins (
                 id, session_id, device_id, student_id, status, checked_in_at,
                 latitude, longitude, distance_from_venue_meters,
                 liveness_passed, liveness_score, risk_score, risk_factors,
@@ -205,38 +207,41 @@ export const CheckinModel = {
             RETURNING id, session_id, student_id, status, checked_in_at,
                       latitude, longitude, distance_from_venue_meters,
                       liveness_passed, liveness_score, risk_score, risk_factors`,
-                [
-                    uuidv4(),
-                    session_id,
-                    device.id,
-                    studentId,
-                    status,
-                    now,
-                    latitude,
-                    longitude,
-                    diffDist,
-                    liveness_passed,
-                    liveness_score,
-                    risk_score,
-                    riskFactors,
-                    now,
-                    now,
-                    location_accuracy_meters,
-                    liveness_challenge_type,
-                    match_passed,
-                    match_score,
-                    face_embedding_hash,
-                    qr_code ? true : false
-                ]
-            );
+                    [
+                        uuidv4(),
+                        session_id,
+                        device.id,
+                        studentId,
+                        status,
+                        now,
+                        latitude,
+                        longitude,
+                        diffDist,
+                        liveness_passed,
+                        liveness_score,
+                        risk_score,
+                        riskFactors,
+                        now,
+                        now,
+                        location_accuracy_meters,
+                        liveness_challenge_type,
+                        match_passed,
+                        match_score,
+                        face_embedding_hash,
+                        qr_code ? true : false
+                    ]
+                );
 
-            return { ...rows[0], recommendations } as (Checkin & { recommendations?: string[] });
-        } catch (err: any) {
-            if (err.code === '23505') {
-                throw new BadRequestError('Student has already checked in for this session');
+                await DeviceModel.updateAfterCheckin(pgClient, device.id, getRiskLevel(risk_score));
+
+                return { ...rows[0], recommendations } as (Checkin & { recommendations?: string[] });
+            } catch (err: any) {
+                if (err.code === '23505') {
+                    throw new BadRequestError('Student has already checked in for this session');
+                }
+                throw err;
             }
-            throw err;
-        }
+        });
     },
     listByStudent: async function listByStudent(
         pgClient: PoolClient,

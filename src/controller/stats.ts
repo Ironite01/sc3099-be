@@ -16,7 +16,7 @@ async function statsController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { days = 7, course_id } = req.query as { days?: number; course_id?: string };
         const pgClient = await fastify.pg.connect();
@@ -230,7 +230,7 @@ async function statsController(fastify: FastifyInstance) {
                 properties: { sessionId: { type: 'string' } }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { sessionId } = req.params as { sessionId: string };
         const pgClient = await fastify.pg.connect();
@@ -317,7 +317,7 @@ async function statsController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { courseId } = req.params as { courseId: string };
         const { start_date, end_date } = req.query as { start_date?: string; end_date?: string };
@@ -461,7 +461,7 @@ async function statsController(fastify: FastifyInstance) {
                 properties: { studentId: { type: 'string' } }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN])]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { studentId } = req.params as { studentId: string };
         const pgClient = await fastify.pg.connect();

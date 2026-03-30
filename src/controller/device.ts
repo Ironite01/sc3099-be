@@ -10,7 +10,7 @@ async function deviceController(fastify: FastifyInstance) {
 
     // TODO: Confirm if this API is in use and refactor
     fastify.get(`${uri}/`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR])],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()],
         schema: {
             querystring: {
                 type: 'object',
@@ -81,7 +81,7 @@ async function deviceController(fastify: FastifyInstance) {
 
     // TODO: Confirm if this API is in use and refactor
     fastify.post(`${uri}/register`, {
-        preHandler: [fastify.authorize()],
+        preHandler: [fastify.authorize(), fastify.rateLimit()],
         schema: {
             body: {
                 type: 'object',
@@ -155,7 +155,7 @@ async function deviceController(fastify: FastifyInstance) {
     });
 
     fastify.post(`${uri}/`, {
-        preHandler: [fastify.authorize(1)],
+        preHandler: [fastify.authorize(1), fastify.rateLimit()],
         schema: {
             body: {
                 type: 'object',
@@ -217,7 +217,7 @@ async function deviceController(fastify: FastifyInstance) {
     });
 
     fastify.get(`${uri}/my-devices`, {
-        preHandler: [fastify.authorize()]
+        preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -244,7 +244,7 @@ async function deviceController(fastify: FastifyInstance) {
 
     // TODO: Update the attestion and trust_score later
     fastify.patch(`${uri}/:device_id`, {
-        preHandler: [fastify.authorize()],
+        preHandler: [fastify.authorize(), fastify.rateLimit()],
         schema: {
             body: {
                 type: 'object',
@@ -297,14 +297,15 @@ async function deviceController(fastify: FastifyInstance) {
                 properties: { device_id: { type: 'string' } }
             }
         },
-        preHandler: [fastify.authorize()]
+        preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const userId = (req?.user as any).sub;
+            const userRole = (req?.user as any).role;
             const deviceId = (req?.params as any).device_id;
 
-            await DeviceModel.delete(pgClient, deviceId, userId);
+            await DeviceModel.delete(pgClient, deviceId, { userId, userRole });
 
             res.status(204).send();
         } finally {
