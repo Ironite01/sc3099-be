@@ -32,6 +32,9 @@ export type User = {
     camera_consent: boolean;
     face_enrolled: boolean;
     geolocation_consent: boolean;
+    face_embedding_hash?: string;
+    scheduled_deletion_at?: Date | null;
+    updated_at?: Date | null;
 };
 
 export const UserModel = {

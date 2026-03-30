@@ -3,8 +3,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { BadRequestError } from './error.js';
 import { SESSION_STATUS, SessionModel } from './session.js';
 import { DeviceModel } from './device.js';
-import { DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
+import { EnrollmentModel } from './enrollment.js';
 import haversineDistance from '../helpers/haversineDistance.js';
+import { MlServices } from '../services/ml/index.js';
+import { LivenessChallengeType } from '../services/ml/liveness/check.js';
+import { UserModel } from './user.js';
+import { isBase64 } from '../helpers/regex.js';
+import { DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
+import { parseQrPayload, secureEqualsHex, signQrPayload } from '../helpers/qr.js';
 
 export enum CHECKIN_STATUS {
     PENDING = 'pending',
@@ -59,22 +65,45 @@ export type StudentCheckinRecord = {
 };
 
 export const CheckinModel = {
-    create: async function performCheckin(
+    create: async function create(
         pgClient: PoolClient,
         studentId: string,
         payload: {
+            ipAddr: string;
+            userAgent?: string;
             session_id: string;
             latitude: number;
             longitude: number;
             location_accuracy_meters: number;
             device_fingerprint: string;
             liveness_challenge_response?: any;
+            liveness_challenge_type?: LivenessChallengeType;
             qr_code?: string;
+            qrSecret?: string;
         }
     ) {
-        const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, qr_code } = payload;
-        // TODO: QR code verification
-        const qrCodeVerified = false;
+        const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent, qrSecret } = payload;
+        if (!liveness_challenge_response || !isBase64(liveness_challenge_response)) {
+            throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
+        }
+
+        if (!qr_code || typeof qr_code !== 'string') {
+            throw new BadRequestError('QR code is required for this session');
+        }
+
+        const parsedQr = parseQrPayload(qr_code);
+        if (!parsedQr || parsedQr.sessionId !== session_id || !Number.isFinite(parsedQr.exp)) {
+            throw new BadRequestError('Invalid QR code');
+        }
+
+        if (Date.now() > parsedQr.exp) {
+            throw new BadRequestError('QR code expired');
+        }
+
+        const expectedSig = signQrPayload(session_id, parsedQr.exp, qrSecret!!);
+        if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
+            throw new BadRequestError('Invalid QR code');
+        }
 
         const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
         if (!device || !device.is_active || device.revoked_at || !device.is_trusted) {
@@ -84,11 +113,14 @@ export const CheckinModel = {
         if (!session) {
             throw new BadRequestError('Session not found');
         }
-        if (session.status !== SESSION_STATUS.ACTIVE) {
+        if (session.status !== SESSION_STATUS.ACTIVE || session.checkin_closes_at < new Date()) {
             throw new BadRequestError('Session not active');
         }
-        // TODO: Verify that the student is enrolled in the course
-        //
+
+        const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+        if (!enrollment) {
+            throw new BadRequestError('Student is not enrolled in this course');
+        }
 
         const now = new Date();
         if (now < new Date(session.checkin_opens_at) || now > new Date(session.checkin_closes_at)) {
@@ -103,20 +135,57 @@ export const CheckinModel = {
 
         const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
         const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
-        if (diffDist > geofenceRadius) {
-            throw new BadRequestError('Location is outside the permitted geofence');
+
+        const user = await UserModel.getById(pgClient, studentId);
+        if (!user || !user.is_active || !user.face_embedding_hash) {
+            throw new BadRequestError('Unable to perform face verification for user');
         }
 
-        // TODO: Get from Redis or ML side the risk and liveness
-        const livenessPassed = true;
-        const livenessScore = 0.95;
-        const livenessChallengeType = JSON.stringify(liveness_challenge_response) || null;
-        const riskScore = 0.1;
-        const riskFactors: any[] = [];
-        const status = CHECKIN_STATUS.APPROVED;
-        const faceMatchPassed = null;
-        const faceMatchScore = null;
-        const faceEmbeddingHash = null;
+        let status = CHECKIN_STATUS.PENDING;
+        const { liveness_passed, liveness_score, face_embedding_hash } = await MlServices.liveness.check.post({
+            challenge_response: liveness_challenge_response,
+            challenge_type: liveness_challenge_type
+        });
+
+        const { match_passed, match_score } = await MlServices.face.verify.post({
+            image: liveness_challenge_response,
+            reference_template_hash: user.face_embedding_hash
+        });
+
+        const riskFactors: { type: string; weight: number }[] = [];
+        const u = {
+            liveness_score,
+            face_match_score: match_score,
+            device_signature: device.device_fingerprint,
+            device_public_key: device.public_key,
+            ip_address: ipAddr,
+            geolocation: {
+                latitude,
+                longitude,
+                accuracy: location_accuracy_meters
+            }
+        };
+        const {
+            risk_score, pass_threshold, signal_breakdown, recommendations
+        } = await MlServices.risk.assess.post(userAgent ? {
+            ...u,
+            user_agent: userAgent
+        } : u);
+        const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
+        for (const [key, value] of Object.entries(signalBreakdown)) {
+            riskFactors.push({
+                type: key,
+                weight: Number(value)
+            });
+        }
+
+        if (Boolean(pass_threshold)) {
+            status = CHECKIN_STATUS.FLAGGED;
+        } else if (!liveness_passed || diffDist > geofenceRadius * 2) {
+            status = CHECKIN_STATUS.REJECTED;
+        } else {
+            status = CHECKIN_STATUS.APPROVED;
+        }
 
         try {
             const { rows } = await pgClient.query(
@@ -146,22 +215,22 @@ export const CheckinModel = {
                     latitude,
                     longitude,
                     diffDist,
-                    livenessPassed,
-                    livenessScore,
-                    riskScore,
+                    liveness_passed,
+                    liveness_score,
+                    risk_score,
                     riskFactors,
                     now,
                     now,
                     location_accuracy_meters,
-                    livenessChallengeType,
-                    faceMatchPassed,
-                    faceMatchScore,
-                    faceEmbeddingHash,
-                    qrCodeVerified
+                    liveness_challenge_type,
+                    match_passed,
+                    match_score,
+                    face_embedding_hash,
+                    qr_code ? true : false
                 ]
             );
 
-            return rows[0] as Checkin;
+            return { ...rows[0], recommendations } as (Checkin & { recommendations?: string[] });
         } catch (err: any) {
             if (err.code === '23505') {
                 throw new BadRequestError('Student has already checked in for this session');
@@ -204,7 +273,7 @@ export const CheckinModel = {
             params
         );
 
-        return rows as StudentCheckinRecord[];
+        return rows as (StudentCheckinRecord[] & { recommendations?: string[] });
     },
 
     listBySession: async function listBySession(

@@ -1,10 +1,5 @@
 import { ML_BASE_URL } from "../index.js";
 
-export interface RiskSignal {
-    type: string;
-    weight: number;
-}
-
 export interface GeolocationData {
     latitude: number;
     longitude: number;

@@ -1,8 +1,18 @@
 import { ML_BASE_URL } from "../index.js";
 
+export enum LivenessChallengeType {
+    BLINK = "blink",
+    HEAD_TURN = "head_turn",
+    HEAD_UP = "head_up",
+    HEAD_DOWN = "head_down",
+    HEAD_LEFT = "head_left",
+    HEAD_RIGHT = "head_right",
+    PASSIVE = "passive"
+}
+
 export interface LivenessCheckPostRequest {
     challenge_response: string;
-    challenge_type?: string;
+    challenge_type?: LivenessChallengeType;
 }
 
 export interface LivenessCheckResponse {
@@ -15,7 +25,7 @@ export interface LivenessCheckResponse {
 
 const check = {
     post: async (payload: LivenessCheckPostRequest) => {
-        const { challenge_response, challenge_type = "passive" } = payload;
+        const { challenge_response, challenge_type = LivenessChallengeType.PASSIVE } = payload;
         if (!payload || !challenge_response) {
             throw new Error('Missing required fields: challenge_response is required.');
         }

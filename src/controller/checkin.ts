@@ -1,10 +1,10 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { createHmac, timingSafeEqual } from 'crypto';
 import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from '../model/error.js';
 import { CheckinModel } from '../model/checkin.js';
+import { LivenessChallengeType } from '../services/ml/liveness/check.js';
 
 function normalizeRiskFactors(value: any): any[] {
     if (Array.isArray(value)) return value;
@@ -22,53 +22,6 @@ function mergeMetadata(riskFactors: any[], patch: Record<string, any>): any[] {
     return [...cleaned, { type: 'metadata', data: patch }];
 }
 
-function parseQrPayload(rawQr: string): { sessionId: string; exp: number; sig: string } | null {
-    try {
-        const parsed = JSON.parse(rawQr);
-        if (parsed && parsed.sessionId && parsed.exp && parsed.sig) {
-            return {
-                sessionId: String(parsed.sessionId),
-                exp: Number(parsed.exp),
-                sig: String(parsed.sig)
-            };
-        }
-    } catch {
-        // Continue to URL format parsing
-    }
-
-    try {
-        const url = new URL(rawQr);
-        const sessionId = url.searchParams.get('sessionId');
-        const exp = url.searchParams.get('exp');
-        const sig = url.searchParams.get('sig');
-        if (!sessionId || !exp || !sig) {
-            return null;
-        }
-        return { sessionId, exp: Number(exp), sig };
-    } catch {
-        return null;
-    }
-}
-
-function signQrPayload(sessionId: string, exp: number, secret: string): string {
-    return createHmac('sha256', secret)
-        .update(`${sessionId}.${exp}`)
-        .digest('hex');
-}
-
-function secureEqualsHex(a: string, b: string): boolean {
-    try {
-        const left = Buffer.from(a, 'hex');
-        const right = Buffer.from(b, 'hex');
-        if (left.length !== right.length || left.length === 0) {
-            return false;
-        }
-        return timingSafeEqual(left, right);
-    } catch {
-        return false;
-    }
-}
-
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
 
@@ -83,6 +36,7 @@ async function checkinController(fastify: FastifyInstance) {
                     location_accuracy_meters: { type: 'number' },
                     device_fingerprint: { type: 'string' },
                     liveness_challenge_response: { type: 'string' },
+                    liveness_challenge_type: { type: 'string', enum: Object.values(LivenessChallengeType) },
                     qr_code: { type: 'string' }
                 },
                 required: ['session_id', 'latitude', 'longitude', 'location_accuracy_meters', 'device_fingerprint'],
@@ -95,16 +49,22 @@ async function checkinController(fastify: FastifyInstance) {
         try {
             const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response, qr_code } = req.body as any;
             const userId = (req.user as any)?.sub;
+            const ipAddr = req.ip;
+            const userAgent = req.headers['user-agent'];
+            const qrSecret = fastify.config.QR_CODE_SECRET || 'default-qr-secret';
 
-            const checkin = await CheckinModel.create(pgClient, userId, {
+            const u = {
+                ipAddr,
                 session_id,
                 latitude,
                 longitude,
                 location_accuracy_meters,
                 device_fingerprint,
                 liveness_challenge_response,
-                qr_code
-            });
+                qr_code,
+                qrSecret
+            };
+            const checkin = await CheckinModel.create(pgClient, userId, userAgent ? { ...u, userAgent } : u);
 
             res.status(201).send({
                 id: checkin.id,

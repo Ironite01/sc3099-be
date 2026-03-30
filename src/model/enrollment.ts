@@ -123,5 +123,28 @@ export const EnrollmentModel = {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
+    },
+    getEnrollmentByStudentIdAndCourseId: async (pgClient: any, studentId: string, courseId: string): Promise<Enrollment> => {
+        try {
+            if (!studentId || !courseId) {
+                throw new NotFoundError();
+            }
+
+            const { rows } = await pgClient.query(
+                `SELECT id, student_id, course_id, is_active, enrolled_at, dropped_at 
+                 FROM enrollments 
+                 WHERE student_id = $1 AND course_id = $2 AND is_active = true`,
+                [studentId, courseId]
+            );
+
+            if (rows.length === 0) {
+                throw new NotFoundError('Enrollment not found for the given student and course');
+            }
+
+            return rows[0] as Enrollment;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     }
 }
