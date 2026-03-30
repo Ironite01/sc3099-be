@@ -1,9 +1,11 @@
 import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
-import { isStrongPassword } from '../helpers/regex.js';
+import { isBase64, isStrongPassword } from '../helpers/regex.js';
 import { v4 as uuidv4 } from 'uuid';
-import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
+import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError, UnavailableError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
+import { MlServices } from '../services/ml/index.js';
+import face from '../services/ml/face/index.js';
 
 export enum USER_ROLE_TYPES {
     STUDENT = 'student',
@@ -134,8 +136,6 @@ export const UserModel = {
             if (!isStrongPassword(password)) {
                 throw new BadRequestError("Password too weak");
             }
-
-            // TODO: Fetch the ML service
 
             // Store the user data
             const salt = bcrypt.genSaltSync(SALT_ROUNDS);
@@ -279,6 +279,47 @@ export const UserModel = {
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
+        }
+    },
+    faceEnroll: async function faceEnroll(pgClient: PoolClient, userId: string, image: string) {
+        if (!userId) {
+            throw new NotFoundError();
+        }
+
+        const user = await UserModel.getById(pgClient, userId);
+        if (!user.camera_consent) {
+            throw new BadRequestError('Camera consent required before face enrollment');
+        }
+
+        if (!isBase64(image)) {
+            throw new BadRequestError('Invalid image data');
+        }
+
+        let mlFaceEnrollResponse;
+        try {
+            mlFaceEnrollResponse = await MlServices.face.enroll.post({
+                user_id: userId,
+                image,
+                camera_consent: user.camera_consent
+            });
+        } catch (err) {
+            console.error('Something went wrong in the ML service...', err);
+            throw new UnavailableError();
+        }
+
+        const rows = await pgClient.query(
+            'UPDATE users SET face_enrolled = TRUE, face_embedding_hash = $2 WHERE id = $1',
+            [userId, mlFaceEnrollResponse.face_template_hash]
+        );
+        if (rows.rowCount === 0) {
+            throw new NotFoundError();
+        }
+
+        return {
+            success: true,
+            message: 'Face enrolled successfully',
+            face_enrolled: true,
+            quality_score: mlFaceEnrollResponse.quality_score
         }
     }
 }

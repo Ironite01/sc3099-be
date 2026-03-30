@@ -48,3 +48,9 @@ export class RateLimitError extends AppError {
         super(message, 429);
     }
 }
+
+export class UnavailableError extends AppError {
+    constructor(message = statusDefaultMessage["503"]) {
+        super(message, 503);
+    }
+}

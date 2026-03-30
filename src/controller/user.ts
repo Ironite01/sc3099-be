@@ -290,13 +290,14 @@ async function userController(fastify: FastifyInstance) {
         }
     });
 
+    // Reviewed
     fastify.post(`${uri}/me/face/enroll`, {
-        preHandler: [(fastify as any).authorize()],
+        preHandler: [fastify.authorize()],
         schema: {
             body: {
                 type: 'object',
                 properties: {
-                    image: { type: 'string', minLength: 1 }
+                    image: { type: 'string', minLength: 1 } // base64-encoded image string
                 },
                 required: ['image'],
                 additionalProperties: false
@@ -306,26 +307,10 @@ async function userController(fastify: FastifyInstance) {
         const pgClient = await fastify.pg.connect();
         try {
             const userId = (req?.user as any).sub;
-            if (!userId) {
-                throw new NotFoundError();
-            }
 
-            const user = await UserModel.getById(pgClient, userId);
-            if (!user.camera_consent) {
-                throw new BadRequestError('Camera consent required before face enrollment');
-            }
+            const u = await UserModel.faceEnroll(pgClient, userId, (req.body as { image: string }).image);
 
-            // Placeholder enrollment flow: mark user as face_enrolled.
-            await pgClient.query(
-                'UPDATE users SET face_enrolled = TRUE, updated_at = NOW() WHERE id = $1',
-                [userId]
-            );
-
-            res.status(200).send({
-                message: 'Face enrolled successfully',
-                face_enrolled: true,
-                quality_score: 0.9
-            });
+            res.status(200).send(u);
         } finally {
             pgClient.release();
         }

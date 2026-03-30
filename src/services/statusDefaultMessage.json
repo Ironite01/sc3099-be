@@ -5,5 +5,6 @@
     "409": "Conflict",
     "404": "Resource not found",
     "429": "Rate limit exceeded",
-    "500": "Internal server error"
+    "500": "Internal server error",
+    "503": "Face recognition service unavailable"
 }
