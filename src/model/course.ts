@@ -10,6 +10,7 @@ export interface CourseCreateData {
     require_face_recognition?: boolean;
     require_device_binding?: boolean;
     risk_threshold?: number;
+    instructor_id?: string | null;
 }
 
 export interface CourseUpdateData {
@@ -23,11 +24,13 @@ export interface CourseUpdateData {
     require_device_binding?: boolean;
     risk_threshold?: number;
     is_active?: boolean;
+    instructor_id?: string | null;
 }
 
 export interface CourseListFilters {
     is_active?: boolean | undefined;
     semester?: string | undefined;
+    instructor_id?: string | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
 }
@@ -35,7 +38,7 @@ export interface CourseListFilters {
 const UPDATABLE_FIELDS = [
     'name', 'description', 'venue_name', 'venue_latitude', 'venue_longitude',
     'geofence_radius_meters', 'require_face_recognition', 'require_device_binding',
-    'risk_threshold', 'is_active'
+    'risk_threshold', 'is_active', 'instructor_id'
 ];
 
 export class Course {
@@ -52,6 +55,7 @@ export class Course {
     require_face_recognition!: boolean;
     require_device_binding!: boolean;
     risk_threshold!: number;
+    instructor_id!: string | null;
     created_at!: Date;
     updated_at!: Date;
 
@@ -60,7 +64,7 @@ export class Course {
     }
 
     static async findAll(pgClient: any, filters: CourseListFilters): Promise<{ items: any[], total: number }> {
-        const { is_active, semester, limit = 50, offset = 0 } = filters;
+        const { is_active, semester, instructor_id, limit = 50, offset = 0 } = filters;
 
         let query = `SELECT c.* FROM courses c WHERE 1=1`;
         let countQuery = `SELECT COUNT(*) FROM courses c WHERE 1=1`;
@@ -81,6 +85,13 @@ export class Course {
             params.push(semester);
             countQuery += ` AND c.semester = $${countParamIndex++}`;
             countParams.push(semester);
+        }
+
+        if (instructor_id) {
+            query += ` AND c.instructor_id = $${paramIndex++}`;
+            params.push(instructor_id);
+            countQuery += ` AND c.instructor_id = $${countParamIndex++}`;
+            countParams.push(instructor_id);
         }
 
         query += ` ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
@@ -113,7 +124,8 @@ export class Course {
             geofence_radius_meters = 100.0,
             require_face_recognition = false,
             require_device_binding = true,
-            risk_threshold = 0.5
+            risk_threshold = 0.5,
+            instructor_id = null
         } = data;
 
         const result = await pgClient.query(
@@ -121,18 +133,18 @@ export class Course {
                 id, code, name, description, semester, is_active,
                 venue_latitude, venue_longitude, venue_name,
                 geofence_radius_meters, require_face_recognition, require_device_binding,
-                risk_threshold, created_at, updated_at
+                risk_threshold, instructor_id, created_at, updated_at
             )
              VALUES (
                 gen_random_uuid()::text, $1, $2, $3, $4, TRUE,
-                $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()
+                $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW()
              )
              RETURNING *`,
             [
                 code, name, description, semester,
                 venue_latitude, venue_longitude, venue_name,
                 geofence_radius_meters, require_face_recognition, require_device_binding,
-                risk_threshold
+                risk_threshold, instructor_id
             ]
         );
 
