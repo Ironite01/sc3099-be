@@ -18,6 +18,7 @@ const courseProperties = {
     require_face_recognition: { type: 'boolean' },
     require_device_binding: { type: 'boolean' },
     risk_threshold: { type: 'number' },
+    instructor_id: { type: ['string', 'null'] },
     created_at: { type: 'string', format: 'date-time' },
     updated_at: { type: 'string', format: 'date-time' }
 };
@@ -40,6 +41,7 @@ const listCoursesSchema = {
         properties: {
             is_active: { type: 'boolean' },
             semester: { type: 'string' },
+            instructor_id: { type: 'string' },
             limit: { type: 'integer', default: 50 },
             offset: { type: 'integer', default: 0 }
         }
@@ -84,7 +86,8 @@ const createCourseSchema = {
             geofence_radius_meters: { type: 'number', default: 100.0 },
             require_face_recognition: { type: 'boolean', default: false },
             require_device_binding: { type: 'boolean', default: true },
-            risk_threshold: { type: 'number', default: 0.5 }
+            risk_threshold: { type: 'number', default: 0.5 },
+            instructor_id: { type: 'string' }
         }
     },
     response: {
@@ -111,7 +114,8 @@ const updateCourseSchema = {
             require_face_recognition: { type: 'boolean' },
             require_device_binding: { type: 'boolean' },
             risk_threshold: { type: 'number' },
-            is_active: { type: 'boolean' }
+            is_active: { type: 'boolean' },
+            instructor_id: { type: 'string' }
         }
     },
     response: {
@@ -238,8 +242,8 @@ async function courseController(fastify: any) {
     fastify.get(baseUri + '/', { schema: listCoursesSchema, preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest<{ Querystring: CourseListFilters }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const { is_active, semester, limit = 50, offset = 0 } = req.query;
-            const { items, total } = await Course.findAll(pgClient, { is_active, semester, limit, offset });
+            const { is_active, semester, instructor_id, limit = 50, offset = 0 } = req.query;
+            const { items, total } = await Course.findAll(pgClient, { is_active, semester, instructor_id, limit, offset });
             res.status(200).send({ items, total, limit, offset });
         } catch (err: any) {
             console.error('Error listing courses:', err.message);
@@ -269,7 +273,11 @@ async function courseController(fastify: any) {
     fastify.post(baseUri + '/', { schema: createCourseSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Body: CourseCreateData }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const course = await Course.create(pgClient, req.body);
+            const body = req.body;
+            if ((req.user as any)?.role === USER_ROLE_TYPES.INSTRUCTOR && !body.instructor_id) {
+                body.instructor_id = (req.user as any).sub;
+            }
+            const course = await Course.create(pgClient, body);
             res.status(201).send(course);
         } catch (err: any) {
             console.error('Error creating course:', err.message);

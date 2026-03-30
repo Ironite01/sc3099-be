@@ -35,6 +35,7 @@ async function schemaBootstrap(fastify: FastifyInstance) {
                 name TEXT NOT NULL,
                 description TEXT,
                 semester TEXT NOT NULL,
+                instructor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 venue_latitude DOUBLE PRECISION,
                 venue_longitude DOUBLE PRECISION,
@@ -123,6 +124,7 @@ async function schemaBootstrap(fastify: FastifyInstance) {
             )
         `);
 
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_courses_instructor_id ON courses(instructor_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_sessions_course_id ON sessions(course_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_sessions_status_checkin_close ON sessions(status, checkin_closes_at)`);
