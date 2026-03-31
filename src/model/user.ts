@@ -37,11 +37,11 @@ export type User = {
 };
 
 export const UserModel = {
-    getStudentsByEmail: async (pgClient: any, emails: string[]) => {
+    getUsersByEmail: async (pgClient: any, emails: string[]) => {
         try {
             const { rows } = await pgClient.query(
-                'SELECT id, email, full_name, role, is_active FROM users WHERE email = ANY($1) AND role = $2',
-                [emails, USER_ROLE_TYPES.STUDENT]
+                'SELECT id, email, full_name, role, is_active FROM users WHERE email = ANY($1)',
+                [emails]
             );
 
             return rows as User[];

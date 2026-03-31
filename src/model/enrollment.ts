@@ -146,15 +146,23 @@ export const EnrollmentModel = {
 
                 // We use a non-iterative approach to reduce burden on the database
                 if (shouldCreateAccs) {
-                    const users = await UserModel.createMultipleUsers(pgClient, studentEmails.map(email => ({
+                    const createResult = await UserModel.createMultipleUsers(pgClient, studentEmails.map(email => ({
                         email,
                         full_name: extractNameFromEmail(email),
                         role: USER_ROLE_TYPES.STUDENT
                     })));
 
-                    created = studentEmails.length - users.length;
+                    created = createResult.length;
 
-                    const filteredOnlyActiveUser = users.filter(u => {
+                    const createdEmails = createResult.map(u => u.email);
+                    studentEmails.forEach(email => {
+                        if (!createdEmails.includes(email)) {
+                            details.push({ email, status: 'not_found' });
+                            not_found++;
+                        }
+                    });
+
+                    const filteredOnlyActiveUser = createResult.filter(u => {
                         if (!u.is_active) {
                             details.push({ email: u.email, status: 'inactive' });
                         }
@@ -162,10 +170,10 @@ export const EnrollmentModel = {
                     });
                     const existingUserEmails = filteredOnlyActiveUser.map(u => u.email);
 
-                    // Only consider emails that have user accounts created before or newly created
+                    // Only consider emails that have active user accounts
                     studentEmails = studentEmails.filter(e => existingUserEmails.includes(e));
                 } else {
-                    const existingUsers = await UserModel.getStudentsByEmail(pgClient, studentEmails);
+                    const existingUsers = await UserModel.getUsersByEmail(pgClient, studentEmails);
 
                     const filteredOnlyActiveUser = existingUsers.filter(u => {
                         if (!u.is_active) {
@@ -173,7 +181,16 @@ export const EnrollmentModel = {
                         }
                         return u.is_active;
                     });
-                    const existingUserEmails = filteredOnlyActiveUser.map(u => u.email);
+
+                    const filteredByRole = filteredOnlyActiveUser.filter(u => {
+                        if (u.role !== USER_ROLE_TYPES.STUDENT) {
+                            details.push({ email: u.email, status: 'not_student' });
+                            return false;
+                        }
+                        return true;
+                    });
+
+                    const existingUserEmails = filteredByRole.map(u => u.email);
 
                     // Filter out only users that are found
                     studentEmails = studentEmails.filter(e => {

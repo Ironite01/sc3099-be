@@ -229,7 +229,7 @@
   - Request: student_id, course_id
   - Requires: Instructor or Admin
 
-- [ ] **POST /enrollments/bulk** - Bulk enroll by email
+- [x] **POST /enrollments/bulk** - Bulk enroll by email
   - Request: course_id, student_emails[], create_accounts
   - Requires: Instructor or Admin
 
