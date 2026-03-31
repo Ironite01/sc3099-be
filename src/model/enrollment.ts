@@ -1,3 +1,4 @@
+import type Course from "./course.js";
 import { AppError, BadRequestError, NotFoundError } from "./error.js";
 import { USER_ROLE_TYPES } from "./user.js";
 
@@ -11,26 +12,24 @@ export type Enrollment = {
 }
 
 export const EnrollmentModel = {
-    getEnrollmentsByStudentId: async (pgClient: any, studentId: string): Promise<(Enrollment & { course_code: string; course_name: string, semester: string, instructor_name: string })[]> => {
+    getEnrollmentsByStudentId: async (pgClient: any, studentId: string): Promise<(Enrollment & { instructor_name: string, course_code: string, course_name: string, semester: string })[]> => {
         try {
             if (!studentId) {
                 throw new NotFoundError();
             }
 
-            // TODO: Validate this query with TA later...
+            // We do not consider if course and enrollments are active or not
             const { rows } = await pgClient.query(
-                `SELECT DISTINCT ON (e.id) e.id, e.student_id, e.course_id, e.is_active, e.enrolled_at, e.dropped_at,
-     c.code as course_code, c.name as course_name, c.semester, u.full_name as instructor_name 
-     FROM enrollments e
-     JOIN courses c ON e.course_id = c.id AND c.is_active = true
-     LEFT JOIN sessions s ON c.id = s.course_id AND s.status IN ('scheduled', 'active')
-     LEFT JOIN users u ON s.instructor_id = u.id
-     WHERE e.student_id = $1 AND e.is_active = true
-     ORDER BY e.id, s.scheduled_start ASC NULLS LAST`,
+                `SELECT c.name as course_name, c.code as course_code, c.semester, c.id as course_id, u.full_name as instructor_name, e.enrolled_at, e.id, e.is_active
+                 FROM enrollments e
+                 JOIN courses c ON c.id = e.course_id
+                 JOIN users u ON u.id = c.instructor_id
+                 WHERE e.student_id = $1
+                 ORDER BY e.enrolled_at DESC`,
                 [studentId]
             );
 
-            return rows as (Enrollment & { course_code: string; course_name: string, semester: string, instructor_name: string })[];
+            return rows as (Enrollment & { instructor_name: string, course_code: string, course_name: string, semester: string })[];
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
