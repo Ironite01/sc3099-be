@@ -89,6 +89,11 @@ export const DeviceModel = {
 
         return transact(async (pgClient: PoolClient) => {
             try {
+                const existingDeviceIfAny = await this.getByFingerprint(pgClient, userId, device_fingerprint);
+                if (existingDeviceIfAny && existingDeviceIfAny.revocation_reason === `Deleted by ${USER_ROLE_TYPES.ADMIN}`) {
+                    throw new ForbiddenError("This device has been revoked by an administrator");
+                }
+
                 const { rows } = await pgClient.query(
                     `INSERT INTO devices (
                     id, user_id, device_fingerprint, device_name, platform, public_key,
@@ -135,7 +140,6 @@ export const DeviceModel = {
 
                 return d;
             } catch (err: any) {
-                console.error(err.message);
                 if (err instanceof AppError) throw err;
                 throw new BadRequestError('Database operation failed');
             }
