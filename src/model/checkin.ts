@@ -239,12 +239,14 @@ export const CheckinModel = {
                     `INSERT INTO checkins (
                 id, session_id, device_id, student_id, status, checked_in_at,
                 latitude, longitude, distance_from_venue_meters,
-                liveness_passed, liveness_score, risk_score, risk_factors
+                liveness_passed, liveness_score, risk_score, risk_factors,
+                location_accuracy_meters, liveness_challenge_type,
+                face_match_passed, face_match_score, face_embedding_hash, qr_code_verified
             ) VALUES (
                 gen_random_uuid()::text, $1, $2, $3, $4, $5,
                 $6, $7, $8,
                 $9, $10, $11, $12,
-                $13, $14, $15, $16, $17, $18, $19
+                $13, $14, $15, $16, $17, $18
             )
             RETURNING id, session_id, student_id, status, checked_in_at,
                       latitude, longitude, distance_from_venue_meters,
