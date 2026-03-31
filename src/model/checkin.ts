@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { BadRequestError } from './error.js';
+import { AppError, BadRequestError } from './error.js';
 import { SESSION_STATUS, SessionModel } from './session.js';
 import { DeviceModel } from './device.js';
 import { EnrollmentModel } from './enrollment.js';
@@ -82,161 +82,162 @@ export const CheckinModel = {
             qr_code?: string;
         }
     ) {
-        const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent } = payload;
-        return await transact(async (pgClient) => {
-            // 1. Validate device
-            const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
-            if (!device || !device.is_active || device.revoked_at) {
-                throw new BadRequestError('Device is not allowed for check-in');
-            }
-            // 2. Validate session
-            const session = await SessionModel.getById(pgClient, session_id);
-            if (!session) {
-                throw new BadRequestError('Session not found');
-            }
-            const now = new Date();
-            if (session.status !== SESSION_STATUS.ACTIVE || session.checkin_closes_at < now) {
-                throw new BadRequestError('Session not active');
-            }
-            if (now < new Date(session.checkin_opens_at) || now > new Date(session.checkin_closes_at)) {
-                throw new BadRequestError('Check-in window closed');
-            }
-
-            // 3. Validate QR code
-            const requireQr = Boolean(session.qr_code_secret);
-            if (requireQr) {
-                if (!qr_code || typeof qr_code !== 'string') {
-                    throw new BadRequestError('QR code is required for this session');
+        try {
+            const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent } = payload;
+            return await transact(async (pgClient) => {
+                // 1. Validate device
+                const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
+                if (!device || !device.is_active || device.revoked_at) {
+                    throw new BadRequestError('Device is not allowed for check-in');
+                }
+                // 2. Validate session
+                const session = await SessionModel.getById(pgClient, session_id);
+                if (!session) {
+                    throw new BadRequestError('Session not found');
+                }
+                const now = new Date();
+                if (session.status !== SESSION_STATUS.ACTIVE || session.checkin_closes_at < now) {
+                    throw new BadRequestError('Session not active');
+                }
+                if (now < new Date(session.checkin_opens_at) || now > new Date(session.checkin_closes_at)) {
+                    throw new BadRequestError('Check-in window closed');
                 }
 
-                const parsedQr = parseQrPayload(qr_code);
-                if (!parsedQr || parsedQr.sessionId !== session_id || !Number.isFinite(parsedQr.exp)) {
-                    throw new BadRequestError('Invalid QR code');
-                }
-
-                const sessionQrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at).getTime() : null;
-                if (Date.now() > parsedQr.exp || (sessionQrExpiresAt && Date.now() > sessionQrExpiresAt)) {
-                    throw new BadRequestError('QR code expired');
-                }
-
-                const expectedSig = signQrPayload(session_id, parsedQr.exp, session.qr_code_secret!);
-                if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
-                    throw new BadRequestError('Invalid QR code');
-                }
-            }
-
-            // 4. Validate enrollment
-            const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
-            if (!enrollment) {
-                throw new BadRequestError('Student is not enrolled in this course');
-            }
-
-            // 5. Geofencing
-            const venueLat = session.venue_latitude;
-            const venueLon = session.venue_longitude;
-            if (!venueLat || !venueLon) {
-                throw new BadRequestError('Session does not have a valid venue location');
-            }
-
-            const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
-            const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
-
-            // 6. Liveness check and face verification
-            const user = await UserModel.getById(pgClient, studentId);
-            if (!user || !user.is_active || !user.face_embedding_hash) {
-                throw new BadRequestError('Unable to perform face verification for user');
-            }
-
-            let status = CHECKIN_STATUS.PENDING;
-            const requireLiveness = session.require_liveness_check !== false;
-            if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
-                throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
-            }
-
-            const requireFaceMatch = session.require_face_match !== false;
-            if (requireFaceMatch && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
-                throw new BadRequestError('Face image is required and must be a valid base64 string');
-            }
-
-            let livenessPassed = true;
-            let livenessScore: number | null = null;
-            let faceEmbeddingHash: string | null = null;
-
-            if (requireLiveness) {
-                let livenessResult;
-                try {
-                    livenessResult = await MlServices.liveness.check.post({
-                        challenge_response: liveness_challenge_response,
-                        challenge_type: liveness_challenge_type
-                    });
-                } catch (err: any) {
-                    const msg = String(err?.message || 'Failed to check liveness.');
-                    if (/^ML 4\d\d:/.test(msg)) {
-                        throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                // 3. Validate QR code
+                const requireQr = Boolean(session.qr_code_secret);
+                if (requireQr) {
+                    if (!qr_code || typeof qr_code !== 'string') {
+                        throw new BadRequestError('QR code is required for this session');
                     }
-                    throw err;
-                }
-                livenessPassed = Boolean(livenessResult.liveness_passed);
-                livenessScore = livenessResult.liveness_score;
-                faceEmbeddingHash = livenessResult.face_embedding_hash;
-            }
 
-            let matchPassed = true;
-            let matchScore: number | null = null;
-            if (requireFaceMatch) {
-                let faceResult;
-                try {
-                    faceResult = await MlServices.face.verify.post({
-                        image: liveness_challenge_response,
-                        reference_template_hash: user.face_embedding_hash
-                    });
-                } catch (err: any) {
-                    const msg = String(err?.message || 'Failed to verify face.');
-                    if (/^ML 4\d\d:/.test(msg)) {
-                        throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                    const parsedQr = parseQrPayload(qr_code);
+                    if (!parsedQr || parsedQr.sessionId !== session_id || !Number.isFinite(parsedQr.exp)) {
+                        throw new BadRequestError('Invalid QR code');
                     }
-                    throw err;
-                }
-                matchPassed = Boolean(faceResult.match_passed);
-                matchScore = faceResult.match_score;
-            }
 
-            // 7. Risk assessment
-            const riskFactors: { type: string; weight: number }[] = [];
-            const {
-                risk_score, pass_threshold, signal_breakdown, recommendations
-            } = await MlServices.risk.assess.post({
-                ...(livenessScore !== null ? { liveness_score: livenessScore } : {}),
-                ...(matchScore !== null ? { face_match_score: matchScore } : {}),
-                ...(userAgent ? { user_agent: userAgent } : {}),
-                device_signature: device.device_fingerprint,
-                device_public_key: device.public_key,
-                ip_address: ipAddr,
-                geolocation: {
-                    latitude,
-                    longitude,
-                    accuracy: location_accuracy_meters
+                    const sessionQrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at).getTime() : null;
+                    if (Date.now() > parsedQr.exp || (sessionQrExpiresAt && Date.now() > sessionQrExpiresAt)) {
+                        throw new BadRequestError('QR code expired');
+                    }
+
+                    const expectedSig = signQrPayload(session_id, parsedQr.exp, session.qr_code_secret!);
+                    if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
+                        throw new BadRequestError('Invalid QR code');
+                    }
                 }
-            });
-            const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
-            for (const [key, value] of Object.entries(signalBreakdown)) {
-                riskFactors.push({
-                    type: key,
-                    weight: Number(value)
+
+                // 4. Validate enrollment
+                const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+                if (!enrollment) {
+                    throw new BadRequestError('Student is not enrolled in this course');
+                }
+
+                // 5. Geofencing
+                const venueLat = session.venue_latitude;
+                const venueLon = session.venue_longitude;
+                if (!venueLat || !venueLon) {
+                    throw new BadRequestError('Session does not have a valid venue location');
+                }
+
+                const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
+                const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
+
+                // 6. Liveness check and face verification
+                const user = await UserModel.getById(pgClient, studentId);
+                if (!user || !user.is_active || !user.face_embedding_hash) {
+                    throw new BadRequestError('Unable to perform face verification for user');
+                }
+
+                let status = CHECKIN_STATUS.PENDING;
+                const requireLiveness = session.require_liveness_check !== false;
+                if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                    throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
+                }
+
+                const requireFaceMatch = session.require_face_match !== false;
+                if (requireFaceMatch && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                    throw new BadRequestError('Face image is required and must be a valid base64 string');
+                }
+
+                let livenessPassed = true;
+                let livenessScore: number | null = null;
+                let faceEmbeddingHash: string | null = null;
+
+                if (requireLiveness) {
+                    let livenessResult;
+                    try {
+                        livenessResult = await MlServices.liveness.check.post({
+                            challenge_response: liveness_challenge_response,
+                            challenge_type: liveness_challenge_type
+                        });
+                    } catch (err: any) {
+                        const msg = String(err?.message || 'Failed to check liveness.');
+                        if (/^ML 4\d\d:/.test(msg)) {
+                            throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                        }
+                        throw err;
+                    }
+                    livenessPassed = Boolean(livenessResult.liveness_passed);
+                    livenessScore = livenessResult.liveness_score;
+                    faceEmbeddingHash = livenessResult.face_embedding_hash;
+                }
+
+                let matchPassed = true;
+                let matchScore: number | null = null;
+                if (requireFaceMatch) {
+                    let faceResult;
+                    try {
+                        faceResult = await MlServices.face.verify.post({
+                            image: liveness_challenge_response,
+                            reference_template_hash: user.face_embedding_hash
+                        });
+                    } catch (err: any) {
+                        const msg = String(err?.message || 'Failed to verify face.');
+                        if (/^ML 4\d\d:/.test(msg)) {
+                            throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                        }
+                        throw err;
+                    }
+                    matchPassed = Boolean(faceResult.match_passed);
+                    matchScore = faceResult.match_score;
+                }
+
+                // 7. Risk assessment
+                const riskFactors: { type: string; weight: number }[] = [];
+                const {
+                    risk_score, pass_threshold, signal_breakdown, recommendations
+                } = await MlServices.risk.assess.post({
+                    ...(livenessScore !== null ? { liveness_score: livenessScore } : {}),
+                    ...(matchScore !== null ? { face_match_score: matchScore } : {}),
+                    ...(userAgent ? { user_agent: userAgent } : {}),
+                    device_signature: device.device_fingerprint,
+                    device_public_key: device.public_key,
+                    ip_address: ipAddr,
+                    geolocation: {
+                        latitude,
+                        longitude,
+                        accuracy: location_accuracy_meters
+                    }
                 });
-            }
+                const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
+                for (const [key, value] of Object.entries(signalBreakdown)) {
+                    riskFactors.push({
+                        type: key,
+                        weight: Number(value)
+                    });
+                }
 
-            if ((requireLiveness && !livenessPassed) || diffDist > geofenceRadius * 2) {
-                status = CHECKIN_STATUS.REJECTED;
-            } else if (!Boolean(pass_threshold)) {
-                status = CHECKIN_STATUS.FLAGGED;
-            } else {
-                status = CHECKIN_STATUS.APPROVED;
-            }
+                if ((requireLiveness && !livenessPassed) || diffDist > geofenceRadius * 2) {
+                    status = CHECKIN_STATUS.REJECTED;
+                } else if (!Boolean(pass_threshold)) {
+                    status = CHECKIN_STATUS.FLAGGED;
+                } else {
+                    status = CHECKIN_STATUS.APPROVED;
+                }
 
-            try {
-                const { rows } = await pgClient.query(
-                    `INSERT INTO checkins (
+                try {
+                    const { rows } = await pgClient.query(
+                        `INSERT INTO checkins (
                 id, session_id, device_id, student_id, status, checked_in_at,
                 latitude, longitude, distance_from_venue_meters,
                 liveness_passed, liveness_score, risk_score, risk_factors,
@@ -251,39 +252,43 @@ export const CheckinModel = {
             RETURNING id, session_id, student_id, status, checked_in_at,
                       latitude, longitude, distance_from_venue_meters,
                       liveness_passed, liveness_score, risk_score, risk_factors`,
-                    [
-                        session_id,
-                        device.id,
-                        studentId,
-                        status,
-                        now,
-                        latitude,
-                        longitude,
-                        diffDist,
-                        livenessPassed,
-                        livenessScore,
-                        risk_score,
-                        JSON.stringify(riskFactors),
-                        location_accuracy_meters,
-                        liveness_challenge_type,
-                        matchPassed,
-                        matchScore,
-                        faceEmbeddingHash,
-                        requireQr
-                    ]
-                );
+                        [
+                            session_id,
+                            device.id,
+                            studentId,
+                            status,
+                            now,
+                            latitude,
+                            longitude,
+                            diffDist,
+                            livenessPassed,
+                            livenessScore,
+                            risk_score,
+                            JSON.stringify(riskFactors),
+                            location_accuracy_meters,
+                            liveness_challenge_type,
+                            matchPassed,
+                            matchScore,
+                            faceEmbeddingHash,
+                            requireQr
+                        ]
+                    );
 
-                // 8. Update relevant records after check in
-                await DeviceModel.updateAfterCheckin(pgClient, device.id, getRiskLevel(risk_score));
+                    // 8. Update relevant records after check in
+                    await DeviceModel.updateAfterCheckin(pgClient, device.id, getRiskLevel(risk_score));
 
-                return { ...rows[0], recommendations } as (Checkin & { recommendations?: string[] });
-            } catch (err: any) {
-                if (err.code === '23505') {
-                    throw new BadRequestError('Student has already checked in for this session');
+                    return { ...rows[0], recommendations } as (Checkin & { recommendations?: string[] });
+                } catch (err: any) {
+                    if (err.code === '23505') {
+                        throw new BadRequestError('Student has already checked in for this session');
+                    }
+                    throw err;
                 }
-                throw err;
-            }
-        });
+            });
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     },
     listByStudent: async function listByStudent(
         pgClient: PoolClient,
@@ -362,7 +367,6 @@ export const CheckinModel = {
             } as SessionCheckinRecord;
         });
     },
-
     getBySessionAndStudent: async function getBySessionAndStudent(
         pgClient: PoolClient,
         sessionId: string,

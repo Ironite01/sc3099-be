@@ -217,5 +217,17 @@ export const CourseModel = {
         if (result.rowCount === 0) {
             throw new NotFoundError('Course not found');
         }
+    },
+    isCourseActiveAndValid: async (pgClient: any, courseId: string): Promise<boolean> => {
+        const { rows } = await pgClient.query(
+            `SELECT is_active FROM courses WHERE id = $1`,
+            [courseId]
+        );
+
+        if (rows.length === 0) {
+            throw new NotFoundError('Course not found');
+        }
+
+        return Boolean(rows[0].is_active);
     }
 }

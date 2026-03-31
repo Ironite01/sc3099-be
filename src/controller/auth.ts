@@ -47,9 +47,7 @@ async function authController(fastify: FastifyInstance) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const body: any = req.body;
-            const role = (body.role) as USER_ROLE_TYPES;
-            const user = await UserModel.create(pgClient, { ...body, role });
+            const user = await UserModel.create(pgClient, req.body as any);
 
             // registrationTotal.inc({ role });
 

@@ -33,27 +33,6 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.get(`${uri}/enrolled`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const studentId = (req.user as any)?.sub;
-            const result = await pgClient.query(
-                `SELECT c.*, e.enrolled_at
-                 FROM enrollments e
-                 JOIN courses c ON c.id = e.course_id
-                 WHERE e.student_id = $1
-                   AND e.is_active = TRUE
-                 ORDER BY e.enrolled_at DESC`,
-                [studentId]
-            );
-            res.status(200).send(result.rows);
-        } finally {
-            pgClient.release();
-        }
-    });
-
     fastify.post(`${uri}/register`, {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()],
         schema: {
