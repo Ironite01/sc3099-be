@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { QR_TTL_SECONDS } from './constants.js';
 
 export function parseQrPayload(rawQr: string): { sessionId: string; exp: number; sig: string } | null {
     try {
@@ -44,5 +45,21 @@ export function secureEqualsHex(a: string, b: string): boolean {
         return timingSafeEqual(left, right);
     } catch {
         return false;
+    }
+}
+
+export function buildQrPayload(sessionId: string, secret: string, expiresAt: Date): string {
+    const exp = expiresAt.getTime();
+    const sig = signQrPayload(sessionId, exp, secret);
+    return JSON.stringify({ sessionId, exp, sig });
+}
+
+export function generateQrSecretAndExpiry() {
+    const qrSecret = randomBytes(24).toString('hex');
+    const qrCodeExpiresAt = new Date(Date.now() + QR_TTL_SECONDS * 1000);
+
+    return {
+        qrSecret,
+        qrCodeExpiresAt
     }
 }

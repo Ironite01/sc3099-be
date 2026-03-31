@@ -137,28 +137,28 @@
   - Requires: Admin role
 
 ### Sessions Endpoints (6 remaining)
-- [ ] **GET /sessions/** - List sessions (instructor/admin)
+- [x] **GET /sessions/** - List sessions (instructor/admin)
   - Query params: status, course_id, instructor_id, start_date, end_date, limit, offset
   - Requires: Instructor/Admin role
 
-- [ ] **GET /sessions/my-sessions** - List user's sessions
+- [x] **GET /sessions/my-sessions** - List user's sessions
   - Students: enrolled courses, Instructors: teaching courses
   - Query params: status, upcoming, limit
   - Requires: Auth
 
-- [ ] **GET /sessions/{session_id}** - Get session details
+- [x] **GET /sessions/{session_id}** - Get session details
   - Requires: Auth
 
-- [ ] **POST /sessions/** - Create session (instructor)
+- [x] **POST /sessions/** - Create session (instructor)
   - Request: course_id, name, session_type, scheduled_start/end, checkin times, venue, geofence, risk settings
   - Validation: course ownership, time logic
   - Requires: Instructor role
 
-- [ ] **PATCH /sessions/{session_id}** - Update session
+- [x] **PATCH /sessions/{session_id}** - Update session
   - Partial update, status transitions
   - Requires: Instructor (session owner)
 
-- [ ] **DELETE /sessions/{session_id}** - Delete session
+- [x] **DELETE /sessions/{session_id}** - Delete session
   - Only if status == 'scheduled'
   - Requires: Instructor (session owner)
 
@@ -233,7 +233,7 @@
   - Request: course_id, student_emails[], create_accounts
   - Requires: Instructor or Admin
 
-- [ ] **DELETE /enrollments/{enrollment_id}** - Remove enrollment
+- [x] **DELETE /enrollments/{enrollment_id}** - Remove enrollment
   - Requires: Instructor or Admin
 
 ### Audit Logging (1 total - comprehensive)

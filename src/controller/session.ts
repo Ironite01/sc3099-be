@@ -1,7 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { createHmac, randomBytes } from 'crypto';
-import { SessionModel } from '../model/session.js';
+import { SessionModel, SESSION_STATUS } from '../model/session.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { BASE_URL } from '../helpers/constants.js';
 
@@ -49,105 +48,6 @@ const errorResponseSchema = {
     }
 };
 
-const listSessionsSchema = {
-    querystring: {
-        type: 'object',
-        properties: {
-            status: { type: 'string', enum: ['scheduled', 'active', 'closed', 'cancelled'] },
-            course_id: { type: 'string' },
-            instructor_id: { type: 'string' },
-            start_date: { type: 'string', format: 'date-time' },
-            end_date: { type: 'string', format: 'date-time' },
-            limit: { type: 'integer', default: 50 },
-            offset: { type: 'integer', default: 0 }
-        }
-    },
-    response: {
-        200: {
-            type: 'object',
-            properties: {
-                items: { type: 'array', items: { type: 'object', properties: sessionListItemProperties } },
-                total: { type: 'integer' },
-                limit: { type: 'integer' },
-                offset: { type: 'integer' }
-            }
-        }
-    }
-};
-
-const getSessionSchema = {
-    params: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'string' } }
-    },
-    response: {
-        200: { type: 'object', properties: sessionListItemProperties },
-        404: errorResponseSchema
-    }
-};
-
-const createSessionSchema = {
-    body: {
-        type: 'object',
-        required: ['course_id', 'name', 'scheduled_start', 'scheduled_end'],
-        properties: {
-            course_id: { type: 'string' },
-            instructor_id: { type: 'string' },
-            name: { type: 'string' },
-            session_type: { type: 'string', enum: ['lecture', 'tutorial', 'lab', 'exam'], default: 'lecture' },
-            description: { type: 'string' },
-            scheduled_start: { type: 'string', format: 'date-time' },
-            scheduled_end: { type: 'string', format: 'date-time' },
-            checkin_opens_at: { type: 'string', format: 'date-time' },
-            checkin_closes_at: { type: 'string', format: 'date-time' },
-            venue_name: { type: 'string' },
-            venue_latitude: { type: 'number' },
-            venue_longitude: { type: 'number' },
-            geofence_radius_meters: { type: 'number' },
-            require_liveness_check: { type: 'boolean', default: true },
-            require_face_match: { type: 'boolean', default: false },
-            risk_threshold: { type: 'number' }
-        }
-    },
-    response: {
-        201: sessionResponseSchema,
-        400: errorResponseSchema
-    }
-};
-
-const updateSessionSchema = {
-    params: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'string' } }
-    },
-    body: {
-        type: 'object',
-        properties: {
-            name: { type: 'string' },
-            description: { type: 'string' },
-            status: { type: 'string', enum: ['scheduled', 'active', 'closed', 'cancelled'] },
-            scheduled_start: { type: 'string', format: 'date-time' },
-            scheduled_end: { type: 'string', format: 'date-time' },
-            checkin_opens_at: { type: 'string', format: 'date-time' },
-            checkin_closes_at: { type: 'string', format: 'date-time' },
-            venue_name: { type: 'string' },
-            venue_latitude: { type: 'number' },
-            venue_longitude: { type: 'number' },
-            geofence_radius_meters: { type: 'number' },
-            require_liveness_check: { type: 'boolean' },
-            require_face_match: { type: 'boolean' },
-            risk_threshold: { type: 'number' }
-        }
-    },
-    response: {
-        200: sessionResponseSchema,
-        400: errorResponseSchema,
-        404: errorResponseSchema
-    }
-};
-
 const updateStatusSchema = {
     params: {
         type: 'object',
@@ -168,23 +68,12 @@ const updateStatusSchema = {
     }
 };
 
-const deleteSessionSchema = {
-    params: {
-        type: 'object',
-        required: ['id'],
-        properties: { id: { type: 'string' } }
-    },
-    response: {
-        400: errorResponseSchema,
-        404: errorResponseSchema
-    }
-};
 
-const QR_TTL_SECONDS = 300;
 const SESSION_TIMEZONE = 'Asia/Singapore';
 const CLOSE_EXPIRED_COOLDOWN_MS = 30_000;
 let lastCloseExpiredRunAt = 0;
 
+// TODO: Check how to do this...
 async function maybeCloseExpiredSessions(pgClient: any): Promise<number> {
     const now = Date.now();
     if (now - lastCloseExpiredRunAt < CLOSE_EXPIRED_COOLDOWN_MS) {
@@ -241,38 +130,36 @@ async function ensureSessionTimezoneColumns(fastify: any) {
     }
 }
 
-function signQrPayload(sessionId: string, expiresAtMs: number, secret: string): string {
-    return createHmac('sha256', secret)
-        .update(`${sessionId}.${expiresAtMs}`)
-        .digest('hex');
-}
-
-function buildQrPayload(sessionId: string, secret: string, expiresAt: Date): string {
-    const exp = expiresAt.getTime();
-    const sig = signQrPayload(sessionId, exp, secret);
-    return JSON.stringify({ sessionId, exp, sig });
-}
-
-async function issueSessionQr(pgClient: any, sessionId: string) {
-    const qrSecret = randomBytes(24).toString('hex');
-    const expiresAt = new Date(Date.now() + QR_TTL_SECONDS * 1000);
-
-    const { rows } = await pgClient.query(
-        `UPDATE sessions
-         SET qr_code_secret = $1,
-             qr_code_expires_at = $2,
-             updated_at = NOW()
-         WHERE id = $3
-         RETURNING *`,
-        [qrSecret, expiresAt, sessionId]
-    );
-
-    return rows[0] ?? null;
-}
-
 async function sessionController(fastify: any) {
     const adminUri = '/api/v1/admin/sessions';
     const uri = `${BASE_URL}/sessions`;
+
+    fastify.get(uri, {
+        schema: {
+            querystring: {
+                type: 'object',
+                properties: {
+                    status: { type: 'string', enum: ['scheduled', 'active', 'closed', 'cancelled'] },
+                    course_id: { type: 'string' },
+                    instructor_id: { type: 'string' },
+                    start_date: { type: 'string', format: 'date-time' },
+                    end_date: { type: 'string', format: 'date-time' },
+                    limit: { type: 'integer', default: 50 },
+                    offset: { type: 'integer', default: 0 }
+                }
+            }
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { limit = 50, offset = 0 } = (req.query) as any;
+            const { items, total } = await SessionModel.getAllFilteredSessions(pgClient, req.query);
+
+            res.status(200).send({ items, total, limit, offset });
+        } finally {
+            pgClient.release();
+        }
+    });
 
     fastify.get(`${uri}/active`, {
         schema: {
@@ -314,12 +201,12 @@ async function sessionController(fastify: any) {
         });
 
     fastify.get(`${uri}/my-sessions`, {
-        preHandler: [fastify.authorize(1), fastify.rateLimit()],
+        preHandler: [fastify.authorize(), fastify.rateLimit()],
         schema: {
             querystring: {
                 type: 'object',
                 properties: {
-                    status: { type: 'string', enum: ['scheduled', 'active', 'closed', 'cancelled'] },
+                    status: { type: 'string', enum: Object.values(SESSION_STATUS) },
                     upcoming: { type: 'boolean', default: false },
                     limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 }
                 }
@@ -328,120 +215,103 @@ async function sessionController(fastify: any) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await maybeCloseExpiredSessions(pgClient);
-
             const user = req.user as any;
-            const userId = user?.sub as string;
-            const role = user?.role as USER_ROLE_TYPES;
-            const { status, upcoming = false, limit = 50 } = req.query as {
-                status?: string;
-                upcoming?: boolean;
-                limit?: number;
-            };
+            const sessions = await SessionModel.getFilteredSessionsByUser(pgClient, user, req.query as any);
 
-            const params: any[] = [];
-            const where: string[] = [];
-
-            if (role === USER_ROLE_TYPES.STUDENT) {
-                params.push(userId);
-                where.push(`EXISTS (
-                    SELECT 1 FROM enrollments e
-                    WHERE e.course_id = s.course_id
-                      AND e.student_id = $${params.length}
-                      AND e.is_active = TRUE
-                )`);
-            } else {
-                params.push(userId);
-                where.push(`(
-                    s.instructor_id = $${params.length}
-                    OR $${params.length} IN (
-                        SELECT id FROM users WHERE role IN ('admin','instructor','ta')
-                    )
-                )`);
-            }
-
-            if (status) {
-                params.push(status);
-                where.push(`s.status = $${params.length}`);
-            }
-
-            if (upcoming) {
-                where.push('s.scheduled_start >= NOW()');
-            }
-
-            params.push(Math.max(1, Math.min(limit, 200)));
-
-            const query = `
-                SELECT s.*, c.code AS course_code, c.name AS course_name,
-                       u.full_name AS instructor_name
-                FROM sessions s
-                JOIN courses c ON c.id = s.course_id
-                LEFT JOIN users u ON u.id = s.instructor_id
-                ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-                ORDER BY s.scheduled_start ASC
-                LIMIT $${params.length}
-            `;
-
-            const result = await pgClient.query(query, params);
-            res.status(200).send(result.rows);
+            res.status(200).send(sessions);
         } finally {
             pgClient.release();
         }
     });
 
-    fastify.get(uri + '/', { schema: listSessionsSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Querystring: any }>, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            await maybeCloseExpiredSessions(pgClient);
-
-            const { limit = 50, offset = 0 } = (req.query) as any;
-            const { items, total } = await SessionModel.findAll(pgClient, req.query);
-
-            res.status(200).send({ items, total, limit, offset });
-        } catch (err: any) {
-            console.error('Error listing sessions:', err.message);
-            res.status(500).send({ detail: err.message });
-        } finally {
-            pgClient.release();
-        }
-    });
-
-    fastify.get(uri + '/:id', { schema: getSessionSchema, preHandler: [fastify.authorize(1), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            await maybeCloseExpiredSessions(pgClient);
-
-            const session = await SessionModel.findById(pgClient, req.params.id);
-            if (!session) {
-                res.status(404).send({ detail: 'Session not found' });
-                return;
+    fastify.get(`${uri}/:session_id`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['session_id'],
+                properties: { session_id: { type: 'string' } }
             }
+        }, preHandler: [fastify.authorize(), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userRole = (req.user as any)?.role;
+            const session = await SessionModel.findById(pgClient, userRole, (req.params as any).session_id);
             res.status(200).send(session);
-        } catch (err: any) {
-            console.error('Error getting session:', err.message);
-            res.status(500).send({ detail: err.message });
         } finally {
             pgClient.release();
         }
     });
 
-    fastify.post(uri + '/', { schema: createSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
+    fastify.post(uri, {
+        schema: {
+            body: {
+                type: 'object',
+                required: ['course_id', 'name', 'scheduled_start', 'scheduled_end'],
+                properties: {
+                    course_id: { type: 'string' },
+                    instructor_id: { type: 'string' },
+                    name: { type: 'string' },
+                    session_type: { type: 'string', enum: ['lecture', 'tutorial', 'lab', 'exam'], default: 'lecture' },
+                    description: { type: 'string' },
+                    scheduled_start: { type: 'string', format: 'date-time' },
+                    scheduled_end: { type: 'string', format: 'date-time' },
+                    checkin_opens_at: { type: 'string', format: 'date-time' },
+                    checkin_closes_at: { type: 'string', format: 'date-time' },
+                    venue_name: { type: 'string' },
+                    venue_latitude: { type: 'number' },
+                    venue_longitude: { type: 'number' },
+                    geofence_radius_meters: { type: 'number' },
+                    require_liveness_check: { type: 'boolean', default: true },
+                    require_face_match: { type: 'boolean', default: false },
+                    risk_threshold: { type: 'number' },
+                    qr_code_enabled: { type: 'boolean', default: false }
+                }
+            }
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
+        // In this endpoint, we also allow TA since there is a relation with them and sessions.
         const pgClient = await fastify.pg.connect();
         try {
-            const session = await SessionModel.create(pgClient, req.body);
+            const session = await SessionModel.create(pgClient, req.body as any);
             res.status(201).send(session);
-        } catch (err: any) {
-            console.error('Error creating session:', err.message);
-            res.status(400).send({ detail: err.message });
         } finally {
             pgClient.release();
         }
     });
 
-    fastify.patch(uri + '/:id', { schema: updateSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string }, Body: any }>, res: FastifyReply) => {
+    fastify.patch(`${uri}/:session_id`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['session_id'],
+                properties: { session_id: { type: 'string' } }
+            },
+            body: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string' },
+                    description: { type: 'string' },
+                    status: { type: 'string', enum: ['scheduled', 'active', 'closed', 'cancelled'] },
+                    scheduled_start: { type: 'string', format: 'date-time' },
+                    scheduled_end: { type: 'string', format: 'date-time' },
+                    checkin_opens_at: { type: 'string', format: 'date-time' },
+                    checkin_closes_at: { type: 'string', format: 'date-time' },
+                    venue_name: { type: 'string' },
+                    venue_latitude: { type: 'number' },
+                    venue_longitude: { type: 'number' },
+                    geofence_radius_meters: { type: 'number' },
+                    require_liveness_check: { type: 'boolean' },
+                    require_face_match: { type: 'boolean' },
+                    risk_threshold: { type: 'number' }
+                }
+            }
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const session = await SessionModel.update(pgClient, req.params.id, req.body);
+            const user = req.user as any;
+            const session = await SessionModel.update(pgClient, user, (req.params as any).session_id, req.body as any);
             if (!session) {
                 res.status(404).send({ detail: 'Session not found' });
                 return;
@@ -459,6 +329,26 @@ async function sessionController(fastify: any) {
         }
     });
 
+    fastify.delete(`${uri}/:session_id`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['session_id'],
+                properties: { session_id: { type: 'string' } }
+            }
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const user = req.user as any;
+            await SessionModel.delete(pgClient, user, (req.params as any).session_id);
+            res.status(204).send();
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    // TODO: Review all below
     fastify.patch(adminUri + '/:id/status', { schema: updateStatusSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string }, Body: { status: string } }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -469,7 +359,7 @@ async function sessionController(fastify: any) {
             }
 
             if (req.body.status === 'active') {
-                session = await issueSessionQr(pgClient, req.params.id);
+                //session = await issueSessionQr(pgClient, req.params.id);
             }
 
             res.status(200).send(session);
@@ -478,69 +368,6 @@ async function sessionController(fastify: any) {
                 res.status(400).send({ detail: err.message });
             } else {
                 console.error('Error updating session status:', err.message);
-                res.status(500).send({ detail: err.message });
-            }
-        } finally {
-            pgClient.release();
-        }
-    });
-
-    fastify.get(adminUri + '/:id/qr', {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
-        schema: {
-            params: {
-                type: 'object',
-                required: ['id'],
-                properties: { id: { type: 'string' } }
-            }
-        }
-    }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            await maybeCloseExpiredSessions(pgClient);
-
-            const session = await SessionModel.getById(pgClient, req.params.id);
-            if (session.status !== 'active') {
-                res.status(400).send({ detail: 'QR code is only available for active sessions' });
-                return;
-            }
-
-            // Always rotate to a fresh short-lived QR token when instructor opens QR.
-            const currentSession = await issueSessionQr(pgClient, session.id);
-            if (!currentSession) {
-                res.status(404).send({ detail: 'Session not found' });
-                return;
-            }
-
-            const qrExpiresAt = currentSession.qr_code_expires_at
-                ? new Date(currentSession.qr_code_expires_at)
-                : new Date(Date.now() + QR_TTL_SECONDS * 1000);
-
-            const qrPayload = buildQrPayload(currentSession.id, currentSession.qr_code_secret!, qrExpiresAt);
-
-            res.status(200).send({
-                session_id: currentSession.id,
-                qr_payload: qrPayload,
-                qr_expires_at: qrExpiresAt.toISOString(),
-                qr_ttl_seconds: Math.max(0, Math.floor((qrExpiresAt.getTime() - Date.now()) / 1000))
-            });
-        } finally {
-            pgClient.release();
-        }
-    });
-
-    fastify.delete(uri + '/:id', { schema: deleteSessionSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            await SessionModel.delete(pgClient, req.params.id);
-            res.status(204).send();
-        } catch (err: any) {
-            if (err.message === 'Session not found') {
-                res.status(404).send({ detail: err.message });
-            } else if (err.message.startsWith('Only scheduled')) {
-                res.status(400).send({ detail: err.message });
-            } else {
-                console.error('Error deleting session:', err.message);
                 res.status(500).send({ detail: err.message });
             }
         } finally {
