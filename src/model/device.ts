@@ -89,9 +89,13 @@ export const DeviceModel = {
 
         return transact(async (pgClient: PoolClient) => {
             try {
-                const existingDeviceIfAny = await this.getByFingerprint(pgClient, userId, device_fingerprint);
-                if (existingDeviceIfAny && existingDeviceIfAny.revocation_reason === `Deleted by ${USER_ROLE_TYPES.ADMIN}`) {
-                    throw new ForbiddenError("This device has been revoked by an administrator");
+                try {
+                    const existingDeviceIfAny = await this.getByFingerprint(pgClient, userId, device_fingerprint);
+                    if (existingDeviceIfAny && existingDeviceIfAny.revocation_reason === `Deleted by ${USER_ROLE_TYPES.ADMIN}`) {
+                        throw new ForbiddenError("This device has been revoked by an administrator");
+                    }
+                } catch {
+                    // Do nothing...
                 }
 
                 const { rows } = await pgClient.query(
