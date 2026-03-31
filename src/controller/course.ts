@@ -239,11 +239,28 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.get(baseUri + '/', { schema: listCoursesSchema, preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest<{ Querystring: CourseListFilters }>, res: FastifyReply) => {
+    fastify.get(baseUri + '/', { 
+        schema: listCoursesSchema,
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.TA, USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
+    }, async (req: FastifyRequest<{ Querystring: CourseListFilters }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const { is_active, semester, instructor_id, limit = 50, offset = 0 } = req.query;
-            const { items, total } = await Course.findAll(pgClient, { is_active, semester, instructor_id, limit, offset });
+            const { is_active, semester, limit = 50, offset = 0 } = req.query;
+            let req_instructor_id = req.query.instructor_id;
+
+            const user = req.user as any;
+            // Only sandbox if they are specifically an instructor or TA 
+            if (user && (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA)) {
+                req_instructor_id = user.sub; // Force filter to logged-in user's courses
+            }
+
+            const { items, total } = await Course.findAll(pgClient, { 
+                is_active, 
+                semester, 
+                instructor_id: req_instructor_id, 
+                limit, 
+                offset 
+            });
             res.status(200).send({ items, total, limit, offset });
         } catch (err: any) {
             console.error('Error listing courses:', err.message);
