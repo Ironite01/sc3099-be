@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
-import { BadRequestError } from './error.js';
+import { BadRequestError, NotFoundError } from './error.js';
 import { SESSION_STATUS, SessionModel } from './session.js';
 import { DeviceModel } from './device.js';
 import { EnrollmentModel } from './enrollment.js';
@@ -80,31 +80,9 @@ export const CheckinModel = {
             liveness_challenge_response?: any;
             liveness_challenge_type?: LivenessChallengeType;
             qr_code?: string;
-            qrSecret?: string;
         }
     ) {
-        const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent, qrSecret } = payload;
-        if (!liveness_challenge_response || !isBase64(liveness_challenge_response)) {
-            throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
-        }
-
-        if (!qr_code || typeof qr_code !== 'string') {
-            throw new BadRequestError('QR code is required for this session');
-        }
-
-        const parsedQr = parseQrPayload(qr_code);
-        if (!parsedQr || parsedQr.sessionId !== session_id || !Number.isFinite(parsedQr.exp)) {
-            throw new BadRequestError('Invalid QR code');
-        }
-
-        if (Date.now() > parsedQr.exp) {
-            throw new BadRequestError('QR code expired');
-        }
-
-        const expectedSig = signQrPayload(session_id, parsedQr.exp, qrSecret!!);
-        if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
-            throw new BadRequestError('Invalid QR code');
-        }
+        const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent } = payload;
 
         return await transact(async (pgClient) => {
             const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
@@ -119,7 +97,15 @@ export const CheckinModel = {
                 throw new BadRequestError('Session not active');
             }
 
-            const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+            let enrollment = null;
+            try {
+                enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+            } catch (err: any) {
+                if (err instanceof NotFoundError) {
+                    throw new BadRequestError('Student is not enrolled in this course');
+                }
+                throw err;
+            }
             if (!enrollment) {
                 throw new BadRequestError('Student is not enrolled in this course');
             }
@@ -143,21 +129,86 @@ export const CheckinModel = {
                 throw new BadRequestError('Unable to perform face verification for user');
             }
 
-            let status = CHECKIN_STATUS.PENDING;
-            const { liveness_passed, liveness_score, face_embedding_hash } = await MlServices.liveness.check.post({
-                challenge_response: liveness_challenge_response,
-                challenge_type: liveness_challenge_type
-            });
+            const requireQr = Boolean(session.qr_code_secret);
+            if (requireQr) {
+                if (!qr_code || typeof qr_code !== 'string') {
+                    throw new BadRequestError('QR code is required for this session');
+                }
 
-            const { match_passed, match_score } = await MlServices.face.verify.post({
-                image: liveness_challenge_response,
-                reference_template_hash: user.face_embedding_hash
-            });
+                const parsedQr = parseQrPayload(qr_code);
+                if (!parsedQr || parsedQr.sessionId !== session_id || !Number.isFinite(parsedQr.exp)) {
+                    throw new BadRequestError('Invalid QR code');
+                }
+
+                const sessionQrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at).getTime() : null;
+                if (Date.now() > parsedQr.exp || (sessionQrExpiresAt && Date.now() > sessionQrExpiresAt)) {
+                    throw new BadRequestError('QR code expired');
+                }
+
+                const expectedSig = signQrPayload(session_id, parsedQr.exp, session.qr_code_secret!);
+                if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
+                    throw new BadRequestError('Invalid QR code');
+                }
+            }
+
+            const requireLiveness = session.require_liveness_check !== false;
+            if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
+            }
+
+            const requireFaceMatch = session.require_face_match !== false;
+            if (requireFaceMatch && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                throw new BadRequestError('Face image is required and must be a valid base64 string');
+            }
+
+            let status = CHECKIN_STATUS.PENDING;
+            let livenessPassed = true;
+            let livenessScore: number | null = null;
+            let faceEmbeddingHash: string | null = null;
+
+            if (requireLiveness) {
+                let livenessResult;
+                try {
+                    livenessResult = await MlServices.liveness.check.post({
+                        challenge_response: liveness_challenge_response,
+                        challenge_type: liveness_challenge_type
+                    });
+                } catch (err: any) {
+                    const msg = String(err?.message || 'Failed to check liveness.');
+                    if (/^ML 4\d\d:/.test(msg)) {
+                        throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                    }
+                    throw err;
+                }
+                livenessPassed = Boolean(livenessResult.liveness_passed);
+                livenessScore = livenessResult.liveness_score;
+                faceEmbeddingHash = livenessResult.face_embedding_hash;
+            }
+
+            let matchPassed = true;
+            let matchScore: number | null = null;
+            if (requireFaceMatch) {
+                let faceResult;
+                try {
+                    faceResult = await MlServices.face.verify.post({
+                        image: liveness_challenge_response,
+                        reference_template_hash: user.face_embedding_hash
+                    });
+                } catch (err: any) {
+                    const msg = String(err?.message || 'Failed to verify face.');
+                    if (/^ML 4\d\d:/.test(msg)) {
+                        throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                    }
+                    throw err;
+                }
+                matchPassed = Boolean(faceResult.match_passed);
+                matchScore = faceResult.match_score;
+            }
 
             const riskFactors: { type: string; weight: number }[] = [];
             const u = {
-                liveness_score,
-                face_match_score: match_score,
+                ...(livenessScore !== null ? { liveness_score: livenessScore } : {}),
+                ...(matchScore !== null ? { face_match_score: matchScore } : {}),
                 device_signature: device.device_fingerprint,
                 device_public_key: device.public_key,
                 ip_address: ipAddr,
@@ -181,10 +232,10 @@ export const CheckinModel = {
                 });
             }
 
-            if (Boolean(pass_threshold)) {
-                status = CHECKIN_STATUS.FLAGGED;
-            } else if (!liveness_passed || diffDist > geofenceRadius * 2) {
+            if ((requireLiveness && !livenessPassed) || diffDist > geofenceRadius * 2) {
                 status = CHECKIN_STATUS.REJECTED;
+            } else if (!Boolean(pass_threshold)) {
+                status = CHECKIN_STATUS.FLAGGED;
             } else {
                 status = CHECKIN_STATUS.APPROVED;
             }
@@ -195,14 +246,13 @@ export const CheckinModel = {
                 id, session_id, device_id, student_id, status, checked_in_at,
                 latitude, longitude, distance_from_venue_meters,
                 liveness_passed, liveness_score, risk_score, risk_factors,
-                created_at, updated_at, location_accuracy_meters,
-                liveness_challenge_type, face_match_passed, face_match_score, face_embedding_hash,
-                qr_code_verified
+                location_accuracy_meters, liveness_challenge_type,
+                face_match_passed, face_match_score, face_embedding_hash, qr_code_verified
             ) VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7, $8,
-                $9, $10, $11, $12::jsonb,
-                $13, $14, $15, $16, $17, $18, $19, $20, $21
+                $9, $10, $11, $12,
+                $13, $14, $15, $16, $17, $18, $19
             )
             RETURNING id, session_id, student_id, status, checked_in_at,
                       latitude, longitude, distance_from_venue_meters,
@@ -217,18 +267,16 @@ export const CheckinModel = {
                         latitude,
                         longitude,
                         diffDist,
-                        liveness_passed,
-                        liveness_score,
+                        livenessPassed,
+                        livenessScore,
                         risk_score,
-                        riskFactors,
-                        now,
-                        now,
+                        JSON.stringify(riskFactors),
                         location_accuracy_meters,
                         liveness_challenge_type,
-                        match_passed,
-                        match_score,
-                        face_embedding_hash,
-                        qr_code ? true : false
+                        matchPassed,
+                        matchScore,
+                        faceEmbeddingHash,
+                        requireQr
                     ]
                 );
 

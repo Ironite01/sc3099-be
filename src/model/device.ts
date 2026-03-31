@@ -98,13 +98,30 @@ export const DeviceModel = {
             try {
                 const { rows } = await pgClient.query(
                     `INSERT INTO devices (
-                id, user_id, device_fingerprint, device_name, platform, browser, 
-                os_version, app_version, public_key, public_key_created_at,
-                attestation_passed, is_trusted, trust_score, is_emulator, 
-                is_rooted_jailbroken, first_seen_at, last_seen_at, total_checkins, is_active
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-            RETURNING *`,
+                        id, user_id, device_fingerprint, device_name, platform, browser, 
+                        os_version, app_version, public_key, public_key_created_at,
+                        attestation_passed, is_trusted, trust_score, is_emulator, 
+                        is_rooted_jailbroken, first_seen_at, last_seen_at, total_checkins, is_active
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                    ON CONFLICT (device_fingerprint)
+                    DO UPDATE SET
+                        device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
+                        platform = COALESCE(EXCLUDED.platform, devices.platform),
+                        browser = COALESCE(EXCLUDED.browser, devices.browser),
+                        os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
+                        app_version = COALESCE(EXCLUDED.app_version, devices.app_version),
+                        public_key = EXCLUDED.public_key,
+                        public_key_created_at = EXCLUDED.public_key_created_at,
+                        attestation_passed = EXCLUDED.attestation_passed,
+                        is_emulator = EXCLUDED.is_emulator,
+                        is_rooted_jailbroken = EXCLUDED.is_rooted_jailbroken,
+                        is_active = TRUE,
+                        revoked_at = NULL,
+                        revocation_reason = NULL,
+                        last_seen_at = EXCLUDED.last_seen_at
+                    WHERE devices.user_id = EXCLUDED.user_id
+                    RETURNING *`,
                     [
                         deviceId, userId, device_fingerprint, device_name || null, platform || null,
                         browser || null, os_version || null, app_version || null, public_key, now,
@@ -121,17 +138,24 @@ export const DeviceModel = {
                 );
 
                 if (rows.length === 0) {
+                    const existing = await pgClient.query(
+                        `SELECT user_id FROM devices WHERE device_fingerprint = $1 LIMIT 1`,
+                        [device_fingerprint]
+                    );
+                    if (existing.rows[0]?.user_id && existing.rows[0].user_id !== userId) {
+                        throw new BadRequestError('Device already registered to another account. Please unbind first.');
+                    }
                     throw new BadRequestError('Failed to register device');
                 }
 
-                const d = rows[0] as Device;
+                const device = rows[0] as Device;
 
                 await pgClient.query(
                     `UPDATE devices SET is_active = false WHERE user_id = $1 AND is_active = true AND id != $2`,
-                    [userId, d.id]
+                    [userId, device.id]
                 );
 
-                return d;
+                return device;
             } catch (err: any) {
                 if (err instanceof AppError) throw err;
                 throw new BadRequestError('Database operation failed');
@@ -273,7 +297,7 @@ export const DeviceModel = {
     },
     updateAfterCheckin: async function updateAfterCheckin(pgClient: PoolClient, deviceId: string, riskScore: string) {
         const { rows } = await pgClient.query(
-            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), risk_score = $3
+            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), trust_score = $2
             WHERE id = $1 RETURNING *`,
             [deviceId, riskScore]
         );

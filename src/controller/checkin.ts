@@ -53,8 +53,6 @@ async function checkinController(fastify: FastifyInstance) {
         const userId = (req.user as any)?.sub;
         const ipAddr = req.ip;
         const userAgent = req.headers['user-agent'];
-        const qrSecret = fastify.config.QR_CODE_SECRET || 'default-qr-secret';
-
         const u = {
             ipAddr,
             session_id,
@@ -63,8 +61,7 @@ async function checkinController(fastify: FastifyInstance) {
             location_accuracy_meters,
             device_fingerprint,
             liveness_challenge_response,
-            qr_code,
-            qrSecret
+            qr_code
         };
         const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
 

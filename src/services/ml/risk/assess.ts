@@ -48,7 +48,14 @@ const assess = {
         });
 
         if (!response || !response.ok) {
-            throw new Error('Failed to assess risk.');
+            let detail = 'Failed to assess risk.';
+            try {
+                const body = await response.json();
+                detail = body?.detail || body?.message || body?.error || detail;
+            } catch {
+                // ignore parse failure
+            }
+            throw new Error(`ML ${response.status}: ${detail}`);
         }
 
         return await response.json() as RiskAssessResponse;
