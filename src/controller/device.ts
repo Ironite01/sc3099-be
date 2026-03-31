@@ -79,7 +79,6 @@ async function deviceController(fastify: FastifyInstance) {
         }
     });
 
-    // TODO: Confirm if this API is in use and refactor
     fastify.post(`${uri}/register`, {
         preHandler: [fastify.authorize(), fastify.rateLimit()],
         schema: {
@@ -152,68 +151,6 @@ async function deviceController(fastify: FastifyInstance) {
             is_rooted_jailbroken: device.is_rooted_jailbroken,
             first_seen_at: device.first_seen_at
         });
-    });
-
-    fastify.post(`${uri}/`, {
-        preHandler: [fastify.authorize(1), fastify.rateLimit()],
-        schema: {
-            body: {
-                type: 'object',
-                required: ['device_fingerprint'],
-                properties: {
-                    device_fingerprint: { type: 'string', minLength: 4 },
-                    device_name: { type: 'string' },
-                    platform: { type: 'string' },
-                    public_key: { type: 'string' }
-                }
-            }
-        }
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const userId = (req.user as any)?.sub as string;
-        const { device_fingerprint, device_name, platform, public_key } = req.body as any;
-        const normalizedPublicKey = public_key ?? '';
-
-        const pgClient = await (fastify as any).pg.connect();
-        try {
-            const result = await pgClient.query(
-                `INSERT INTO devices (
-                    id, user_id, device_fingerprint, device_name, platform, public_key,
-                    public_key_created_at,
-                    is_trusted, trust_score, is_active, first_seen_at, last_seen_at,
-                    total_checkins, created_at, updated_at
-                ) VALUES (
-                    gen_random_uuid()::text, $1, $2, $3, $4, $5,
-                    NOW(),
-                    FALSE, 'low', TRUE, NOW(), NOW(),
-                    0, NOW(), NOW()
-                )
-                ON CONFLICT (user_id, device_fingerprint)
-                DO UPDATE SET
-                    device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
-                    platform = COALESCE(EXCLUDED.platform, devices.platform),
-                    public_key = COALESCE(EXCLUDED.public_key, devices.public_key),
-                    is_active = TRUE,
-                    last_seen_at = NOW(),
-                    updated_at = NOW()
-                RETURNING id, device_fingerprint, device_name, platform,
-                          is_trusted, trust_score, is_active,
-                          TO_CHAR((first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at,
-                          TO_CHAR((last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at,
-                          total_checkins`,
-                [userId, device_fingerprint, device_name ?? null, platform ?? null, normalizedPublicKey]
-            );
-
-            res.status(201).send(result.rows[0]);
-            // deviceRegistrationTotal.inc();
-        } catch (err: any) {
-            if (err.code === '23505' && err.constraint === 'devices_device_fingerprint_key') {
-                res.status(409).send({ message: 'Device already registered to another account. Please unbind first.' });
-                return;
-            }
-            throw err;
-        } finally {
-            pgClient.release();
-        }
     });
 
     fastify.get(`${uri}/my-devices`, {

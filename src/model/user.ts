@@ -1,11 +1,10 @@
 import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
 import { isBase64, isStrongPassword } from '../helpers/regex.js';
-import { v4 as uuidv4 } from 'uuid';
 import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError, UnavailableError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
 import { MlServices } from '../services/ml/index.js';
-import face from '../services/ml/face/index.js';
+import generateRandomPassword from '../helpers/generateRandomPassword.js';
 
 export enum USER_ROLE_TYPES {
     STUDENT = 'student',
@@ -38,6 +37,19 @@ export type User = {
 };
 
 export const UserModel = {
+    getUsersByEmail: async (pgClient: any, emails: string[]) => {
+        try {
+            const { rows } = await pgClient.query(
+                'SELECT id, email, full_name, role, is_active FROM users WHERE email = ANY($1)',
+                [emails]
+            );
+
+            return rows as User[];
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
     getByFilteredUsers: async function getByFilteredUsers(pgClient: any, filters: Partial<{ role: string, search: string, is_active: boolean, limit: number, offset: number }>) {
         try {
             const { role, is_active, limit, offset, search } = filters;
@@ -91,7 +103,7 @@ export const UserModel = {
     getById: async function getById(pgClient: any, id: string) {
         try {
             const { rows } = await pgClient.query(
-                'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled FROM users WHERE id = $1',
+                'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled, face_embedding_hash FROM users WHERE id = $1',
                 [id]
             );
             if (rows.length === 0) {
@@ -131,9 +143,9 @@ export const UserModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    create: async function create(pgClient: PoolClient, payload: Partial<User> & { password: string, raw_face_data: string }) {
+    create: async (pgClient: PoolClient, payload: Partial<User> & { password: string }) => {
         try {
-            const { email, password, full_name, role, raw_face_data } = payload;
+            const { email, password, full_name, role } = payload;
 
             // Email validation is handled by ajv
             if (!isStrongPassword(password)) {
@@ -145,17 +157,55 @@ export const UserModel = {
             const hashed_password = bcrypt.hashSync(password, salt);
 
             const resDb = await pgClient.query(
-                `INSERT INTO users (id, email, full_name, hashed_password, role, face_embedding_hash, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                `INSERT INTO users (id, email, full_name, hashed_password, role, created_at, updated_at, is_active)
+                VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, true)
                 ON CONFLICT (email) DO NOTHING
                 RETURNING id, email, full_name, role, is_active, created_at, last_login_at;`,
-                [uuidv4(), email, full_name, hashed_password, role!.toLowerCase(), "blablabla", new Date(), new Date()]
+                [email, full_name, hashed_password, role!.toLowerCase(), new Date(), new Date()]
             );
 
             if (resDb.rowCount === 0) {
                 throw new BadRequestError("Email already registered");
             }
             return resDb.rows[0] as User;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    createMultipleUsers: async function createMultipleUsers(pgClient: PoolClient, users: Array<Partial<User>>) {
+        try {
+            if (!users || users.length === 0) {
+                return [];
+            }
+
+            const hashedUsers = users.map(user => ({
+                email: user.email,
+                full_name: user.full_name,
+                hashed_password: bcrypt.hashSync(generateRandomPassword(), bcrypt.genSaltSync(SALT_ROUNDS)),
+                role: user.role!.toLowerCase()
+            }));
+
+            // Build the multi-value INSERT query
+            const values: any[] = [];
+            const placeholders: string[] = [];
+            let paramIndex = 1;
+
+            for (const user of hashedUsers) {
+                placeholders.push(`(gen_random_uuid()::text, $${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, true)`);
+                values.push(user.email, user.full_name, user.hashed_password, user.role, new Date(), new Date());
+                paramIndex += 6;
+            }
+
+            const { rows } = await pgClient.query(
+                `INSERT INTO users (id, email, full_name, hashed_password, role, created_at, updated_at, is_active)
+                VALUES ${placeholders.join(', ')}
+                ON CONFLICT (email) DO NOTHING
+                RETURNING id, email, full_name, role, is_active;`,
+                values
+            );
+
+            return rows as User[];
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');

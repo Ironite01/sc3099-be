@@ -32,7 +32,7 @@ try {
             limits: { fileSize: 50 * 1024 * 1024 }
         })
         .register(fastifyCookie)
-        .register(redis)
+        .register(redis) // TODO: Use caching
         .register(rateLimiter)
         .register(auth)
         .register(pg)

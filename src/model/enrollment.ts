@@ -1,5 +1,8 @@
+import type { PoolClient } from "pg";
+import { CourseModel } from "./course.js";
 import { AppError, BadRequestError, NotFoundError } from "./error.js";
-import { USER_ROLE_TYPES } from "./user.js";
+import { USER_ROLE_TYPES, UserModel } from "./user.js";
+import extractNameFromEmail from "../helpers/extractNameFromEmail.js";
 
 export type Enrollment = {
     id: string;
@@ -11,26 +14,24 @@ export type Enrollment = {
 }
 
 export const EnrollmentModel = {
-    getEnrollmentsByStudentId: async (pgClient: any, studentId: string): Promise<(Enrollment & { course_code: string; course_name: string, semester: string, instructor_name: string })[]> => {
+    getEnrollmentsByStudentId: async (pgClient: any, studentId: string): Promise<(Enrollment & { instructor_name: string, course_code: string, course_name: string, semester: string })[]> => {
         try {
             if (!studentId) {
                 throw new NotFoundError();
             }
 
-            // TODO: Validate this query with TA later...
+            // We do not consider if course and enrollments are active or not
             const { rows } = await pgClient.query(
-                `SELECT DISTINCT ON (e.id) e.id, e.student_id, e.course_id, e.is_active, e.enrolled_at, e.dropped_at,
-     c.code as course_code, c.name as course_name, c.semester, u.full_name as instructor_name 
-     FROM enrollments e
-     JOIN courses c ON e.course_id = c.id AND c.is_active = true
-     LEFT JOIN sessions s ON c.id = s.course_id AND s.status IN ('scheduled', 'active')
-     LEFT JOIN users u ON s.instructor_id = u.id
-     WHERE e.student_id = $1 AND e.is_active = true
-     ORDER BY e.id, s.scheduled_start ASC NULLS LAST`,
+                `SELECT c.name as course_name, c.code as course_code, c.semester, c.id as course_id, u.full_name as instructor_name, e.enrolled_at, e.id, e.is_active
+                 FROM enrollments e
+                 JOIN courses c ON c.id = e.course_id
+                 JOIN users u ON u.id = c.instructor_id
+                 WHERE e.student_id = $1
+                 ORDER BY e.enrolled_at DESC`,
                 [studentId]
             );
 
-            return rows as (Enrollment & { course_code: string; course_name: string, semester: string, instructor_name: string })[];
+            return rows as (Enrollment & { instructor_name: string, course_code: string, course_name: string, semester: string })[];
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
@@ -42,9 +43,9 @@ export const EnrollmentModel = {
                 throw new NotFoundError();
             }
 
-            // TODO: Check if course is active
+            // We do not care if course is active or not here
 
-            // Check if instructor/TA is in the (active) course - assume TA => instructor in this session table
+            // Check if instructor/TA is in the course - assume TA => instructor in this session table
             const userInCourse = await pgClient.query(
                 `SELECT 1 FROM sessions s
      WHERE s.course_id = $1 AND s.instructor_id = $2`,
@@ -92,10 +93,14 @@ export const EnrollmentModel = {
                 throw new NotFoundError();
             }
 
-            // TODO: Check if course is active
+            const isCourseActiveAndValid = await CourseModel.isCourseActiveAndValid(pgClient, courseId);
+            if (!isCourseActiveAndValid) {
+                throw new NotFoundError('Course not found or is not active');
+            }
 
             // We only allow instructor to enroll students into his own course
             if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                // TODO: Move this to session model
                 const instructorInCourse = await pgClient.query(
                     `SELECT 1 FROM sessions s WHERE s.course_id = $1 AND s.instructor_id = $2`,
                     [courseId, user.id]
@@ -124,6 +129,107 @@ export const EnrollmentModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
+    bulkCreate: async (transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>, courseId: string, studentEmails: string[], shouldCreateAccs: boolean) => {
+        try {
+            return await transact(async (pgClient) => {
+                const isCourseActiveAndValid = await CourseModel.isCourseActiveAndValid(pgClient, courseId);
+                if (!isCourseActiveAndValid) {
+                    throw new NotFoundError('Course not found or is not active');
+                }
+
+                let enrolled = 0;
+                let already_enrolled = 0;
+                let not_found = 0;
+                let created = 0;
+                const details: any[] = [];
+
+                // We use a non-iterative approach to reduce burden on the database
+                if (shouldCreateAccs) {
+                    const createResult = await UserModel.createMultipleUsers(pgClient, studentEmails.map(email => ({
+                        email,
+                        full_name: extractNameFromEmail(email),
+                        role: USER_ROLE_TYPES.STUDENT
+                    })));
+
+                    created = createResult.length;
+
+                    const createdEmails = createResult.map(u => u.email);
+                    studentEmails.forEach(email => {
+                        if (!createdEmails.includes(email)) {
+                            details.push({ email, status: 'not_found' });
+                            not_found++;
+                        }
+                    });
+
+                    const filteredOnlyActiveUser = createResult.filter(u => {
+                        if (!u.is_active) {
+                            details.push({ email: u.email, status: 'inactive' });
+                        }
+                        return u.is_active;
+                    });
+                    const existingUserEmails = filteredOnlyActiveUser.map(u => u.email);
+
+                    // Only consider emails that have active user accounts
+                    studentEmails = studentEmails.filter(e => existingUserEmails.includes(e));
+                } else {
+                    const existingUsers = await UserModel.getUsersByEmail(pgClient, studentEmails);
+
+                    const filteredOnlyActiveUser = existingUsers.filter(u => {
+                        if (!u.is_active) {
+                            details.push({ email: u.email, status: 'inactive' });
+                        }
+                        return u.is_active;
+                    });
+
+                    const filteredByRole = filteredOnlyActiveUser.filter(u => {
+                        if (u.role !== USER_ROLE_TYPES.STUDENT) {
+                            details.push({ email: u.email, status: 'not_student' });
+                            return false;
+                        }
+                        return true;
+                    });
+
+                    const existingUserEmails = filteredByRole.map(u => u.email);
+
+                    // Filter out only users that are found
+                    studentEmails = studentEmails.filter(e => {
+                        if (!existingUserEmails.includes(e)) {
+                            details.push({ email: e, status: 'not_found' });
+                            not_found++;
+                            return false;
+                        }
+                        return true;
+                    });
+                }
+
+                const { rows } = await pgClient.query(
+                    `INSERT INTO enrollments (id, student_id, course_id, is_active, enrolled_at)
+                        SELECT gen_random_uuid()::text, u.id, $1, TRUE, NOW()
+                        FROM users u
+                        WHERE u.email = ANY($2) AND u.is_active = TRUE
+                    ON CONFLICT (student_id, course_id)
+                    DO UPDATE SET is_active = TRUE, dropped_at = NULL
+                    RETURNING id, student_id`,
+                    [courseId, studentEmails]
+                );
+
+                const enrollments = rows as Enrollment[];
+                enrolled = enrollments.length;
+                already_enrolled = studentEmails.length - enrolled;
+
+                return {
+                    enrolled,
+                    already_enrolled,
+                    not_found,
+                    created,
+                    details
+                }
+            });
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
     getEnrollmentByStudentIdAndCourseId: async (pgClient: any, studentId: string, courseId: string): Promise<Enrollment> => {
         try {
             if (!studentId || !courseId) {
@@ -142,6 +248,25 @@ export const EnrollmentModel = {
             }
 
             return rows[0] as Enrollment;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    delete: async (pgClient: any, enrollmentId: string) => {
+        try {
+            if (!enrollmentId) {
+                throw new NotFoundError();
+            }
+
+            const { rows } = await pgClient.query(
+                `UPDATE enrollments SET is_active = false, dropped_at = NOW() WHERE id = $1 RETURNING id`,
+                [enrollmentId]
+            );
+
+            if (rows.length === 0) {
+                throw new NotFoundError('Enrollment not found');
+            }
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');

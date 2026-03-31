@@ -33,7 +33,14 @@ const enroll = {
         });
 
         if (!response || !response.ok) {
-            throw new Error('Failed to enroll face.');
+            let detail = 'Failed to enroll face.';
+            try {
+                const body = await response.json();
+                detail = body?.detail || body?.message || body?.error || detail;
+            } catch {
+                // ignore parse failure
+            }
+            throw new Error(`ML ${response.status}: ${detail}`);
         }
 
         return await response.json() as FaceEnrollResponse;

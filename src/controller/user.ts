@@ -4,7 +4,6 @@ import { BASE_URL, SALT_ROUNDS } from "../helpers/constants.js";
 import { NotFoundError, UnauthorizedError, BadRequestError } from "../model/error.js";
 import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
 import bcrypt from 'bcrypt';
-import { v4 as uuidv4 } from 'uuid';
 
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
@@ -183,6 +182,31 @@ async function userController(fastify: FastifyInstance) {
         }
     });
 
+    fastify.post(`${uri}/me/face/enroll`, {
+        preHandler: [fastify.authorize(), fastify.rateLimit()],
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    image: { type: 'string', minLength: 1 } // base64-encoded image string
+                },
+                required: ['image'],
+                additionalProperties: false
+            }
+        }
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userId = (req?.user as any).sub;
+
+            const u = await UserModel.faceEnroll(pgClient, userId, (req.body as { image: string }).image);
+
+            res.status(200).send(u);
+        } finally {
+            pgClient.release();
+        }
+    });
+
     // TODO: Everything below needs to be refactored and tested accordingly
     fastify.patch(`${BASE_URL}/admin/users/:user_id/deactivate`, {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
@@ -266,13 +290,13 @@ async function userController(fastify: FastifyInstance) {
                         is_active, camera_consent, geolocation_consent, face_enrolled,
                         created_at, updated_at
                     ) VALUES (
-                        $1, $2, $3, $4, $5,
+                        gen_random_uuid()::text, $1, $2, $3, $4,
                         TRUE, FALSE, FALSE, FALSE,
                         NOW(), NOW()
                     )
                     ON CONFLICT (email) DO NOTHING
                     RETURNING id, email, full_name, role, is_active, created_at`,
-                    [uuidv4(), user.email, user.full_name, hashed_password, user.role]
+                    [user.email, user.full_name, hashed_password, user.role]
                 );
 
                 if (result.rows.length) {
@@ -285,32 +309,6 @@ async function userController(fastify: FastifyInstance) {
                 created_count: created.length,
                 requested_count: users.length
             });
-        } finally {
-            pgClient.release();
-        }
-    });
-
-    // Reviewed
-    fastify.post(`${uri}/me/face/enroll`, {
-        preHandler: [fastify.authorize(), fastify.rateLimit()],
-        schema: {
-            body: {
-                type: 'object',
-                properties: {
-                    image: { type: 'string', minLength: 1 } // base64-encoded image string
-                },
-                required: ['image'],
-                additionalProperties: false
-            }
-        }
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const userId = (req?.user as any).sub;
-
-            const u = await UserModel.faceEnroll(pgClient, userId, (req.body as { image: string }).image);
-
-            res.status(200).send(u);
         } finally {
             pgClient.release();
         }

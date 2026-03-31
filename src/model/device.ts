@@ -1,5 +1,4 @@
 import type { PoolClient } from 'pg';
-import { v4 as uuidv4 } from 'uuid';
 import { AppError, BadRequestError, NotFoundError, ForbiddenError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 import deviceAttestationService from '../services/attestation/index.js';
@@ -88,36 +87,48 @@ export const DeviceModel = {
             deviceDetectedRooted
         });
 
-        const deviceId = uuidv4();
-        const now = new Date();
-
-        // Default. This will change during the attendance taking flow
-        const trustScore = TRUST_SCORE_TYPES.LOW;
-
         return transact(async (pgClient: PoolClient) => {
             try {
+                try {
+                    const existingDeviceIfAny = await this.getByFingerprint(pgClient, userId, device_fingerprint);
+                    if (existingDeviceIfAny && existingDeviceIfAny.revocation_reason === `Deleted by ${USER_ROLE_TYPES.ADMIN}`) {
+                        throw new ForbiddenError("This device has been revoked by an administrator");
+                    }
+                } catch {
+                    // Do nothing...
+                }
+
                 const { rows } = await pgClient.query(
                     `INSERT INTO devices (
-                id, user_id, device_fingerprint, device_name, platform, browser, 
-                os_version, app_version, public_key, public_key_created_at,
-                attestation_passed, is_trusted, trust_score, is_emulator, 
-                is_rooted_jailbroken, first_seen_at, last_seen_at, total_checkins, is_active
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-            RETURNING *`,
-                    [
-                        deviceId, userId, device_fingerprint, device_name || null, platform || null,
-                        browser || null, os_version || null, app_version || null, public_key, now,
-                        attestationResult.passed,
-                        false,
-                        trustScore,
-                        attestationResult.isEmulator,
-                        attestationResult.isRootedJailbroken,
-                        now,
-                        now,
-                        0,
-                        true
-                    ]
+                    id, user_id, device_fingerprint, device_name, platform, public_key,
+                    public_key_created_at, is_trusted, trust_score, is_active, first_seen_at, last_seen_at,
+                    total_checkins, browser, os_version, app_version,
+                    attestation_passed, is_emulator, is_rooted_jailbroken
+                ) VALUES (
+                    gen_random_uuid()::text, $1, $2, $3, $4, $5,
+                    NOW(),
+                    FALSE, 'low', TRUE, NOW(), NOW(),
+                    0, $6, $7, $8, $9, $10, $11
+                )
+                ON CONFLICT (device_fingerprint)
+                    DO UPDATE SET
+                        device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
+                        platform = COALESCE(EXCLUDED.platform, devices.platform),
+                        browser = COALESCE(EXCLUDED.browser, devices.browser),
+                        os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
+                        app_version = COALESCE(EXCLUDED.app_version, devices.app_version),
+                        public_key = EXCLUDED.public_key,
+                        public_key_created_at = EXCLUDED.public_key_created_at,
+                        attestation_passed = EXCLUDED.attestation_passed,
+                        is_emulator = EXCLUDED.is_emulator,
+                        is_rooted_jailbroken = EXCLUDED.is_rooted_jailbroken,
+                        is_active = TRUE,
+                        revoked_at = NULL,
+                        revocation_reason = NULL,
+                        last_seen_at = EXCLUDED.last_seen_at
+                RETURNING *`,
+                    [userId, device_fingerprint, device_name ?? null, platform ?? null, public_key, browser, os_version, app_version,
+                        attestationResult.isEmulator, attestationResult.isRootedJailbroken, attestationResult.passed]
                 );
 
                 if (rows.length === 0) {
@@ -262,7 +273,8 @@ export const DeviceModel = {
         }
 
         const result = await pgClient.query(
-            `DELETE FROM devices WHERE id = $1 ${userRole === USER_ROLE_TYPES.ADMIN ? '' : 'AND user_id = $2'} RETURNING id`,
+            `UPDATE devices SET is_active = false, revoked_at = NOW(), revocation_reason = 'Deleted by ${userRole}'
+            WHERE id = $1 ${userRole === USER_ROLE_TYPES.ADMIN ? '' : 'AND user_id = $2'}`,
             userRole === USER_ROLE_TYPES.ADMIN ? [deviceId] : [deviceId, userId]
         );
 
@@ -273,7 +285,7 @@ export const DeviceModel = {
     },
     updateAfterCheckin: async function updateAfterCheckin(pgClient: PoolClient, deviceId: string, riskScore: string) {
         const { rows } = await pgClient.query(
-            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), risk_score = $3
+            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), risk_score = $2
             WHERE id = $1 RETURNING *`,
             [deviceId, riskScore]
         );
