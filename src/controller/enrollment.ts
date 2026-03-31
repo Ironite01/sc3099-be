@@ -2,8 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { USER_ROLE_TYPES } from "../model/user.js";
 import { EnrollmentModel } from "../model/enrollment.js";
-import { BASE_URL, SALT_ROUNDS } from "../helpers/constants.js";
-import bcrypt from "bcrypt";
+import { BASE_URL } from "../helpers/constants.js";
+import pg from "../services/pg.js";
 
 function enrollmentController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/enrollments`;
@@ -138,7 +138,29 @@ function enrollmentController(fastify: FastifyInstance) {
         });
     });
 
-    // POST /api/v1/admin/enrollments/
+    fastify.delete(`${BASE_URL}/enrollments/:enrollment_id`, {
+        schema: {
+            params: {
+                type: 'object',
+                properties: {
+                    enrollment_id: { type: 'string' }
+                },
+                required: ['enrollment_id']
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const enrollmentId = (req.params as { enrollment_id: string }).enrollment_id;
+            await EnrollmentModel.delete(pgClient, enrollmentId);
+
+            res.status(204).send();
+        } finally {
+            pgClient.release();
+        }
+    });
+    // POST /api/v1/admin/enrollments/  
     fastify.post(`${BASE_URL}/admin/enrollments/`, {
         schema: {
             body: {

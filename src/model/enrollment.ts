@@ -1,9 +1,8 @@
-import type { Pool, PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import { CourseModel } from "./course.js";
 import { AppError, BadRequestError, NotFoundError } from "./error.js";
 import { USER_ROLE_TYPES, UserModel } from "./user.js";
 import extractNameFromEmail from "../helpers/extractNameFromEmail.js";
-import generateRandomPassword from "../helpers/generateRandomPassword.js";
 
 export type Enrollment = {
     id: string;
@@ -249,6 +248,25 @@ export const EnrollmentModel = {
             }
 
             return rows[0] as Enrollment;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    delete: async (pgClient: any, enrollmentId: string) => {
+        try {
+            if (!enrollmentId) {
+                throw new NotFoundError();
+            }
+
+            const { rows } = await pgClient.query(
+                `UPDATE enrollments SET is_active = false, dropped_at = NOW() WHERE id = $1 RETURNING id`,
+                [enrollmentId]
+            );
+
+            if (rows.length === 0) {
+                throw new NotFoundError('Enrollment not found');
+            }
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
