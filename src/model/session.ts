@@ -1,6 +1,5 @@
 import { NotFoundError, BadRequestError, AppError } from './error.js';
 import type { PoolClient } from 'pg';
-import { v4 as uuidv4 } from 'uuid';
 
 export enum SESSION_STATUS {
     SCHEDULED = 'scheduled',
@@ -262,10 +261,9 @@ export const SessionModel = {
                 geofence_radius_meters, require_liveness_check, require_face_match,
                 risk_threshold, qr_code_secret, qr_code_expires_at,
                 created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+            ) VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
             RETURNING *`,
             [
-                uuidv4(),
                 course_id,
                 instructor_id,
                 name,

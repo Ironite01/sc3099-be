@@ -1,11 +1,9 @@
 import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
 import { isBase64, isStrongPassword } from '../helpers/regex.js';
-import { v4 as uuidv4 } from 'uuid';
 import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError, UnavailableError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
 import { MlServices } from '../services/ml/index.js';
-import face from '../services/ml/face/index.js';
 
 export enum USER_ROLE_TYPES {
     STUDENT = 'student',
@@ -145,11 +143,11 @@ export const UserModel = {
             const hashed_password = bcrypt.hashSync(password, salt);
 
             const resDb = await pgClient.query(
-                `INSERT INTO users (id, email, full_name, hashed_password, role, face_embedding_hash, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                `INSERT INTO users (id, email, full_name, hashed_password, role, created_at, updated_at, is_active)
+                VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, true)
                 ON CONFLICT (email) DO NOTHING
                 RETURNING id, email, full_name, role, is_active, created_at, last_login_at;`,
-                [uuidv4(), email, full_name, hashed_password, role!.toLowerCase(), "blablabla", new Date(), new Date()]
+                [email, full_name, hashed_password, role!.toLowerCase(), new Date(), new Date()]
             );
 
             if (resDb.rowCount === 0) {

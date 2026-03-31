@@ -1,5 +1,4 @@
 import type { PoolClient } from 'pg';
-import { v4 as uuidv4 } from 'uuid';
 import { AppError, BadRequestError, NotFoundError, ForbiddenError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 import deviceAttestationService from '../services/attestation/index.js';
@@ -88,36 +87,36 @@ export const DeviceModel = {
             deviceDetectedRooted
         });
 
-        const deviceId = uuidv4();
-        const now = new Date();
-
-        // Default. This will change during the attendance taking flow
-        const trustScore = TRUST_SCORE_TYPES.LOW;
-
         return transact(async (pgClient: PoolClient) => {
             try {
                 const { rows } = await pgClient.query(
                     `INSERT INTO devices (
-                id, user_id, device_fingerprint, device_name, platform, browser, 
-                os_version, app_version, public_key, public_key_created_at,
-                attestation_passed, is_trusted, trust_score, is_emulator, 
-                is_rooted_jailbroken, first_seen_at, last_seen_at, total_checkins, is_active
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-            RETURNING *`,
-                    [
-                        deviceId, userId, device_fingerprint, device_name || null, platform || null,
-                        browser || null, os_version || null, app_version || null, public_key, now,
-                        attestationResult.passed,
-                        false,
-                        trustScore,
-                        attestationResult.isEmulator,
-                        attestationResult.isRootedJailbroken,
-                        now,
-                        now,
-                        0,
-                        true
-                    ]
+                    id, user_id, device_fingerprint, device_name, platform, public_key,
+                    public_key_created_at, is_trusted, trust_score, is_active, first_seen_at, last_seen_at,
+                    total_checkins, created_at, updated_at, browser, os_version, app_version,
+                    attestation_passed, is_emulator, is_rooted_jailbroken
+                ) VALUES (
+                    gen_random_uuid()::text, $1, $2, $3, $4, $5,
+                    NOW(),
+                    FALSE, 'low', TRUE, NOW(), NOW(),
+                    0, NOW(), NOW(), $6, $7, $8,
+                    $9, $10, $11
+                )
+                ON CONFLICT (user_id, device_fingerprint)
+                DO UPDATE SET
+                    device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
+                    platform = COALESCE(EXCLUDED.platform, devices.platform),
+                    public_key = COALESCE(EXCLUDED.public_key, devices.public_key),
+                    is_active = TRUE,
+                    last_seen_at = NOW(),
+                    updated_at = NOW()
+                RETURNING id, device_fingerprint, device_name, platform,
+                          is_trusted, trust_score, is_active, 
+                          TO_CHAR((first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at, 
+                          TO_CHAR((last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at, 
+                          total_checkins`,
+                    [userId, device_fingerprint, device_name ?? null, platform ?? null, public_key, browser, os_version, app_version,
+                        attestationResult.isEmulator, attestationResult.isRootedJailbroken, attestationResult.passed]
                 );
 
                 if (rows.length === 0) {
@@ -273,7 +272,7 @@ export const DeviceModel = {
     },
     updateAfterCheckin: async function updateAfterCheckin(pgClient: PoolClient, deviceId: string, riskScore: string) {
         const { rows } = await pgClient.query(
-            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), risk_score = $3
+            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), risk_score = $2
             WHERE id = $1 RETURNING *`,
             [deviceId, riskScore]
         );

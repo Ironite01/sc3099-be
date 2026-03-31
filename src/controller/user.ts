@@ -4,7 +4,6 @@ import { BASE_URL, SALT_ROUNDS } from "../helpers/constants.js";
 import { NotFoundError, UnauthorizedError, BadRequestError } from "../model/error.js";
 import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
 import bcrypt from 'bcrypt';
-import { v4 as uuidv4 } from 'uuid';
 
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
@@ -266,13 +265,13 @@ async function userController(fastify: FastifyInstance) {
                         is_active, camera_consent, geolocation_consent, face_enrolled,
                         created_at, updated_at
                     ) VALUES (
-                        $1, $2, $3, $4, $5,
+                        gen_random_uuid()::text, $1, $2, $3, $4,
                         TRUE, FALSE, FALSE, FALSE,
                         NOW(), NOW()
                     )
                     ON CONFLICT (email) DO NOTHING
                     RETURNING id, email, full_name, role, is_active, created_at`,
-                    [uuidv4(), user.email, user.full_name, hashed_password, user.role]
+                    [user.email, user.full_name, hashed_password, user.role]
                 );
 
                 if (result.rows.length) {
