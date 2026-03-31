@@ -49,9 +49,10 @@ export function secureEqualsHex(a: string, b: string): boolean {
 }
 
 export function buildQrPayload(sessionId: string, secret: string, expiresAt: Date): string {
+    const baseUrl = process.env.FRONTEND_URL!;
     const exp = expiresAt.getTime();
     const sig = signQrPayload(sessionId, exp, secret);
-    return JSON.stringify({ sessionId, exp, sig });
+    return `${baseUrl}/checkin?sessionId=${sessionId}&exp=${exp}&sig=${sig}`;
 }
 
 export function generateQrSecretAndExpiry() {
