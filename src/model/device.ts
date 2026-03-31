@@ -265,7 +265,8 @@ export const DeviceModel = {
         }
 
         const result = await pgClient.query(
-            `DELETE FROM devices WHERE id = $1 ${userRole === USER_ROLE_TYPES.ADMIN ? '' : 'AND user_id = $2'} RETURNING id`,
+            `UPDATE devices SET is_active = false, revoked_at = NOW(), revocation_reason = 'Deleted by ${userRole}'
+            WHERE id = $1 ${userRole === USER_ROLE_TYPES.ADMIN ? '' : 'AND user_id = $2'}`,
             userRole === USER_ROLE_TYPES.ADMIN ? [deviceId] : [deviceId, userId]
         );
 
