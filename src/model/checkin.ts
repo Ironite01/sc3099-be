@@ -103,28 +103,25 @@ export const CheckinModel = {
             }
 
             // 3. Validate QR code
-            let qrCodeVerified;
-            if (qr_code) {
-                qrCodeVerified = true;
-                if (session.qr_code_expires_at && (now > session.qr_code_expires_at)) {
-                    qrCodeVerified = false;
-                }
-                if (typeof qr_code !== 'string') {
-                    qrCodeVerified = false;
+            const requireQr = Boolean(session.qr_code_secret);
+            if (requireQr) {
+                if (!qr_code || typeof qr_code !== 'string') {
+                    throw new BadRequestError('QR code is required for this session');
                 }
 
                 const parsedQr = parseQrPayload(qr_code);
                 if (!parsedQr || parsedQr.sessionId !== session_id || !Number.isFinite(parsedQr.exp)) {
-                    qrCodeVerified = false;
-                } else {
-                    if (Date.now() > parsedQr.exp) {
-                        qrCodeVerified = false;
-                    }
+                    throw new BadRequestError('Invalid QR code');
+                }
 
-                    const expectedSig = signQrPayload(session_id, parsedQr.exp, session.qr_code_secret!);
-                    if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
-                        qrCodeVerified = false;
-                    }
+                const sessionQrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at).getTime() : null;
+                if (Date.now() > parsedQr.exp || (sessionQrExpiresAt && Date.now() > sessionQrExpiresAt)) {
+                    throw new BadRequestError('QR code expired');
+                }
+
+                const expectedSig = signQrPayload(session_id, parsedQr.exp, session.qr_code_secret!);
+                if (!secureEqualsHex(parsedQr.sig, expectedSig)) {
+                    throw new BadRequestError('Invalid QR code');
                 }
             }
 
@@ -150,24 +147,68 @@ export const CheckinModel = {
                 throw new BadRequestError('Unable to perform face verification for user');
             }
 
-            let livenessCheckRes;
-            let faceVerifyRes;
             let status = CHECKIN_STATUS.PENDING;
-            if (liveness_challenge_response) {
-                livenessCheckRes = await MlServices.liveness.check.post({
-                    challenge_response: liveness_challenge_response,
-                    challenge_type: liveness_challenge_type
-                });
+            const requireLiveness = session.require_liveness_check !== false;
+            if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
+            }
 
-                faceVerifyRes = await MlServices.face.verify.post({
-                    image: liveness_challenge_response,
-                    reference_template_hash: user.face_embedding_hash
-                });
+            const requireFaceMatch = session.require_face_match !== false;
+            if (requireFaceMatch && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                throw new BadRequestError('Face image is required and must be a valid base64 string');
+            }
+
+            let livenessPassed = true;
+            let livenessScore: number | null = null;
+            let faceEmbeddingHash: string | null = null;
+
+            if (requireLiveness) {
+                let livenessResult;
+                try {
+                    livenessResult = await MlServices.liveness.check.post({
+                        challenge_response: liveness_challenge_response,
+                        challenge_type: liveness_challenge_type
+                    });
+                } catch (err: any) {
+                    const msg = String(err?.message || 'Failed to check liveness.');
+                    if (/^ML 4\d\d:/.test(msg)) {
+                        throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                    }
+                    throw err;
+                }
+                livenessPassed = Boolean(livenessResult.liveness_passed);
+                livenessScore = livenessResult.liveness_score;
+                faceEmbeddingHash = livenessResult.face_embedding_hash;
+            }
+
+            let matchPassed = true;
+            let matchScore: number | null = null;
+            if (requireFaceMatch) {
+                let faceResult;
+                try {
+                    faceResult = await MlServices.face.verify.post({
+                        image: liveness_challenge_response,
+                        reference_template_hash: user.face_embedding_hash
+                    });
+                } catch (err: any) {
+                    const msg = String(err?.message || 'Failed to verify face.');
+                    if (/^ML 4\d\d:/.test(msg)) {
+                        throw new BadRequestError(msg.replace(/^ML \d{3}:\s*/, ''));
+                    }
+                    throw err;
+                }
+                matchPassed = Boolean(faceResult.match_passed);
+                matchScore = faceResult.match_score;
             }
 
             // 7. Risk assessment
             const riskFactors: { type: string; weight: number }[] = [];
-            let u: RiskAssessPostRequest = {
+            const {
+                risk_score, pass_threshold, signal_breakdown, recommendations
+            } = await MlServices.risk.assess.post({
+                ...(livenessScore !== null ? { liveness_score: livenessScore } : {}),
+                ...(matchScore !== null ? { face_match_score: matchScore } : {}),
+                ...(userAgent ? { user_agent: userAgent } : {}),
                 device_signature: device.device_fingerprint,
                 device_public_key: device.public_key,
                 ip_address: ipAddr,
@@ -176,19 +217,7 @@ export const CheckinModel = {
                     longitude,
                     accuracy: location_accuracy_meters
                 }
-            };
-            if (livenessCheckRes) {
-                u = { ...u, liveness_score: livenessCheckRes.liveness_score };
-            }
-            if (faceVerifyRes) {
-                u = { ...u, face_match_score: faceVerifyRes.match_score };
-            }
-            if (userAgent) {
-                u = { ...u, user_agent: userAgent };
-            }
-            const {
-                risk_score, pass_threshold, signal_breakdown, recommendations
-            } = await MlServices.risk.assess.post(u);
+            });
             const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
             for (const [key, value] of Object.entries(signalBreakdown)) {
                 riskFactors.push({
@@ -197,7 +226,7 @@ export const CheckinModel = {
                 });
             }
 
-            if ((livenessCheckRes && !livenessCheckRes.liveness_passed) || diffDist > geofenceRadius * 2) {
+            if ((requireLiveness && !livenessPassed) || diffDist > geofenceRadius * 2) {
                 status = CHECKIN_STATUS.REJECTED;
             } else if (!Boolean(pass_threshold)) {
                 status = CHECKIN_STATUS.FLAGGED;
@@ -210,15 +239,12 @@ export const CheckinModel = {
                     `INSERT INTO checkins (
                 id, session_id, device_id, student_id, status, checked_in_at,
                 latitude, longitude, distance_from_venue_meters,
-                liveness_passed, liveness_score, risk_score, risk_factors,
-                created_at, updated_at, location_accuracy_meters,
-                liveness_challenge_type, face_match_passed, face_match_score, face_embedding_hash,
-                qr_code_verified
+                liveness_passed, liveness_score, risk_score, risk_factors
             ) VALUES (
                 gen_random_uuid()::text, $1, $2, $3, $4, $5,
                 $6, $7, $8,
-                $9, $10, $11, $12::jsonb,
-                $13, $14, $15, $16, $17, $18, $19, $20
+                $9, $10, $11, $12,
+                $13, $14, $15, $16, $17, $18, $19
             )
             RETURNING id, session_id, student_id, status, checked_in_at,
                       latitude, longitude, distance_from_venue_meters,
@@ -232,18 +258,16 @@ export const CheckinModel = {
                         latitude,
                         longitude,
                         diffDist,
-                        livenessCheckRes?.liveness_passed || null,
-                        livenessCheckRes?.liveness_score || null,
+                        livenessPassed,
+                        livenessScore,
                         risk_score,
-                        riskFactors,
-                        now,
-                        now,
+                        JSON.stringify(riskFactors),
                         location_accuracy_meters,
                         liveness_challenge_type,
-                        faceVerifyRes?.match_passed || null,
-                        faceVerifyRes?.match_score || null,
-                        livenessCheckRes?.face_embedding_hash || null,
-                        qrCodeVerified
+                        matchPassed,
+                        matchScore,
+                        faceEmbeddingHash,
+                        requireQr
                     ]
                 );
 

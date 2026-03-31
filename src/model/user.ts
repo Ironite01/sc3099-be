@@ -89,7 +89,7 @@ export const UserModel = {
     getById: async function getById(pgClient: any, id: string) {
         try {
             const { rows } = await pgClient.query(
-                'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled FROM users WHERE id = $1',
+                'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled, face_embedding_hash FROM users WHERE id = $1',
                 [id]
             );
             if (rows.length === 0) {
