@@ -273,6 +273,10 @@ async function sessionController(fastify: any) {
         // In this endpoint, we also allow TA since there is a relation with them and sessions.
         const pgClient = await fastify.pg.connect();
         try {
+            const user = req.user as any;
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
+                (req.body as any).instructor_id = user.sub;
+            }
             const session = await SessionModel.create(pgClient, req.body as any);
             res.status(201).send(session);
         } finally {
