@@ -182,6 +182,31 @@ async function userController(fastify: FastifyInstance) {
         }
     });
 
+    fastify.post(`${uri}/me/face/enroll`, {
+        preHandler: [fastify.authorize(), fastify.rateLimit()],
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    image: { type: 'string', minLength: 1 } // base64-encoded image string
+                },
+                required: ['image'],
+                additionalProperties: false
+            }
+        }
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userId = (req?.user as any).sub;
+
+            const u = await UserModel.faceEnroll(pgClient, userId, (req.body as { image: string }).image);
+
+            res.status(200).send(u);
+        } finally {
+            pgClient.release();
+        }
+    });
+
     // TODO: Everything below needs to be refactored and tested accordingly
     fastify.patch(`${BASE_URL}/admin/users/:user_id/deactivate`, {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
@@ -284,32 +309,6 @@ async function userController(fastify: FastifyInstance) {
                 created_count: created.length,
                 requested_count: users.length
             });
-        } finally {
-            pgClient.release();
-        }
-    });
-
-    // Reviewed
-    fastify.post(`${uri}/me/face/enroll`, {
-        preHandler: [fastify.authorize(), fastify.rateLimit()],
-        schema: {
-            body: {
-                type: 'object',
-                properties: {
-                    image: { type: 'string', minLength: 1 } // base64-encoded image string
-                },
-                required: ['image'],
-                additionalProperties: false
-            }
-        }
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const userId = (req?.user as any).sub;
-
-            const u = await UserModel.faceEnroll(pgClient, userId, (req.body as { image: string }).image);
-
-            res.status(200).send(u);
         } finally {
             pgClient.release();
         }

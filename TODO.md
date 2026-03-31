@@ -111,29 +111,29 @@
   - Allow: role, is_active
   - Requires: Admin role
 
-- [ ] **POST /users/me/face/enroll** - Enroll face for biometric verification
+- [x] **POST /users/me/face/enroll** - Enroll face for biometric verification
   - Request: {image: base64}
   - Requires: camera_consent = true
   - Calls ML service: POST http://ml-service:8001/face/enroll
   - Returns: quality_score, face_enrolled status
 
 ### Courses Endpoints (5 total)
-- [ ] **GET /courses/** - List courses with filters
+- [x] **GET /courses/** - List courses with filters
   - Query params: is_active, semester, instructor_id, limit, offset
   - Requires: Auth
 
-- [ ] **GET /courses/{course_id}** - Get course details
+- [x] **GET /courses/{course_id}** - Get course details
   - Requires: Auth
 
-- [ ] **POST /courses/** - Create course
+- [x] **POST /courses/** - Create course
   - Request: code, name, semester, instructor_id, venue coords, geofence_radius, risk_threshold
   - Requires: Admin role
 
-- [ ] **PUT /courses/{course_id}** - Update course
+- [x] **PUT /courses/{course_id}** - Update course
   - Partial update allowed
   - Requires: Admin or course instructor
 
-- [ ] **DELETE /courses/{course_id}** - Soft delete (set is_active=false)
+- [x] **DELETE /courses/{course_id}** - Soft delete (set is_active=false)
   - Requires: Admin role
 
 ### Sessions Endpoints (6 remaining)
