@@ -5,7 +5,7 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { CourseModel } from '../model/course.js';
 
 async function courseController(fastify: any) {
-    const uri = `${BASE_URL}/courses'`;
+    const uri = `${BASE_URL}/courses`;
 
     fastify.get(`${uri}/`, {
         schema: {
@@ -87,13 +87,20 @@ async function courseController(fastify: any) {
                     risk_threshold: { type: 'number', default: 0.5 },
                     instructor_id: { type: 'string' }
                 },
-                required: ['code', 'name', 'semester', 'instructor_id'],
+                required: ['code', 'name', 'semester'],
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const course = await CourseModel.create(pgClient, req.body as any);
+            const user = req.user as any;
+            const body = { ...(req.body as any) };
+
+            if (!body.instructor_id) {
+                body.instructor_id = user?.sub;
+            }
+
+            const course = await CourseModel.create(pgClient, body);
             res.status(201).send(course);
         } catch (err: any) {
             console.error('Error creating course:', err.message);
@@ -107,8 +114,8 @@ async function courseController(fastify: any) {
         schema: {
             params: {
                 type: 'object',
-                required: ['id'],
-                properties: { id: { type: 'string' } }
+                required: ['course_id'],
+                properties: { course_id: { type: 'string' } }
             },
             body: {
                 type: 'object',
@@ -130,7 +137,7 @@ async function courseController(fastify: any) {
         const pgClient = await fastify.pg.connect();
         try {
             const user = req.user as any;
-            const course = await CourseModel.update(pgClient, (req.params as any).id, req.body as any, user);
+            const course = await CourseModel.update(pgClient, (req.params as any).course_id, req.body as any, user);
             res.status(200).send(course);
         } finally {
             pgClient.release();
@@ -141,14 +148,14 @@ async function courseController(fastify: any) {
         schema: {
             params: {
                 type: 'object',
-                required: ['id'],
-                properties: { id: { type: 'string' } }
+                required: ['course_id'],
+                properties: { course_id: { type: 'string' } }
             },
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await CourseModel.delete(pgClient, (req.params as any).id);
+            await CourseModel.delete(pgClient, (req.params as any).course_id);
             res.status(204).send();
         } finally {
             pgClient.release();

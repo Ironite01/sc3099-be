@@ -7,4 +7,4 @@ export const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7d
 
 export const DEFAULT_GEOFENCE_RADIUS_METERS = 50;
 
-export const QR_TTL_SECONDS = 300;
+export const QR_TTL_SECONDS = 10;

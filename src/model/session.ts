@@ -39,10 +39,18 @@ export type Session = {
     require_liveness_check?: boolean;
     require_face_match?: boolean;
     risk_threshold?: number | null;
+    qr_code_enabled?: boolean;
     qr_code_secret?: string | null;
     qr_code_expires_at?: Date | null;
     created_at: Date;
     updated_at: Date;
+};
+
+export type SessionQrPayload = {
+    qr_payload: string;
+    qr_expires_at: Date;
+    qr_ttl_seconds: number;
+    qr_code: string;
 };
 
 export const SessionModel = {
@@ -281,16 +289,10 @@ export const SessionModel = {
             }
             const data: any = rows[0] as Session & { course_code: string, course_name: string, instructor_name: string };
 
-            if (userRole === USER_ROLE_TYPES.STUDENT) {
-                delete data.qr_code_secret;
-                delete data.qr_code_expires_at;
-            } else {
-                if (data.qr_code_secret && data.qr_code_expires_at) {
-                    const payload = buildQrPayload(data.id, data.qr_code_secret, data.qr_code_expires_at);
-                    const qrImage = await QRCode.toDataURL(payload);
-                    data['qr_code'] = qrImage;
-                }
-            }
+            // Session detail should remain read-only. QR issuance is handled
+            // explicitly through the dedicated session QR endpoint.
+            delete data.qr_code_secret;
+            delete data.qr_code_expires_at;
 
             return data;
         } catch (err: any) {
@@ -386,9 +388,9 @@ export const SessionModel = {
                 scheduled_start, scheduled_end, checkin_opens_at, checkin_closes_at,
                 status, venue_latitude, venue_longitude, venue_name,
                 geofence_radius_meters, require_liveness_check, require_face_match,
-                risk_threshold, qr_code_secret, qr_code_expires_at,
+                risk_threshold, qr_code_enabled, qr_code_secret, qr_code_expires_at,
                 created_at, updated_at
-            ) VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+            ) VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
             RETURNING *`,
                 [
                     course_id,
@@ -408,6 +410,7 @@ export const SessionModel = {
                     require_liveness_check,
                     require_face_match,
                     risk_threshold,
+                    qr_code_enabled,
                     qr_code_secret,
                     qr_code_expires_at,
                     now,
@@ -435,6 +438,7 @@ export const SessionModel = {
         require_liveness_check?: boolean;
         require_face_match?: boolean;
         risk_threshold?: number | null;
+        qr_code_enabled?: boolean;
     }): Promise<Session | null> {
         try {
             const getSessionRes = await this.getFilteredSessionsByUser(pgClient, user, { limit: 1, session_id: id });
@@ -467,7 +471,7 @@ export const SessionModel = {
                 'name', 'description', 'status', 'scheduled_start', 'scheduled_end',
                 'checkin_opens_at', 'checkin_closes_at', 'venue_name', 'venue_latitude',
                 'venue_longitude', 'geofence_radius_meters', 'require_liveness_check',
-                'require_face_match', 'risk_threshold'
+                'require_face_match', 'risk_threshold', 'qr_code_enabled'
             ];
 
             for (const field of UPDATABLE_FIELDS) {
@@ -475,6 +479,13 @@ export const SessionModel = {
                     fields.push(`${field} = $${paramIndex++}`);
                     values.push((data as any)[field]);
                 }
+            }
+
+            if (data.qr_code_enabled === false) {
+                fields.push(`qr_code_secret = $${paramIndex++}`);
+                values.push(null);
+                fields.push(`qr_code_expires_at = $${paramIndex++}`);
+                values.push(null);
             }
 
             if (fields.length === 0) {
@@ -540,5 +551,53 @@ export const SessionModel = {
         );
 
         return result.rows.length > 0 ? result.rows[0] as Session : null;
+    },
+    issueQr: async function (pgClient: any, id: string): Promise<SessionQrPayload> {
+        const session = await this.getById(pgClient, id);
+
+        if (session.status !== SESSION_STATUS.ACTIVE) {
+            throw new BadRequestError('QR codes can only be issued for active sessions');
+        }
+        if (!session.qr_code_enabled) {
+            throw new BadRequestError('QR codes are not enabled for this session');
+        }
+
+        const now = Date.now();
+        let qrSecret = session.qr_code_secret;
+        let qrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at) : null;
+
+        if (!qrSecret || !qrExpiresAt || qrExpiresAt.getTime() <= now) {
+            const nextQr = generateQrSecretAndExpiry();
+            qrSecret = nextQr.qrSecret;
+            qrExpiresAt = nextQr.qrCodeExpiresAt;
+
+            const updateResult = await pgClient.query(
+                `UPDATE sessions
+                 SET qr_code_secret = $1,
+                     qr_code_expires_at = $2,
+                     updated_at = NOW()
+                 WHERE id = $3
+                 RETURNING qr_code_secret, qr_code_expires_at`,
+                [qrSecret, qrExpiresAt, id]
+            );
+
+            if (!updateResult.rows.length) {
+                throw new NotFoundError();
+            }
+
+            qrSecret = updateResult.rows[0].qr_code_secret as string;
+            qrExpiresAt = new Date(updateResult.rows[0].qr_code_expires_at);
+        }
+
+        const qrPayload = buildQrPayload(id, qrSecret, qrExpiresAt);
+        const qrCode = await QRCode.toDataURL(qrPayload);
+        const ttlSeconds = Math.max(0, Math.floor((qrExpiresAt.getTime() - now) / 1000));
+
+        return {
+            qr_payload: qrPayload,
+            qr_expires_at: qrExpiresAt,
+            qr_ttl_seconds: ttlSeconds,
+            qr_code: qrCode
+        };
     }
 }

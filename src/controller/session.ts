@@ -23,6 +23,7 @@ const sessionProperties = {
     require_liveness_check: { type: 'boolean' },
     require_face_match: { type: 'boolean' },
     risk_threshold: { type: ['number', 'null'] },
+    qr_code_enabled: { type: 'boolean' },
     created_at: { type: 'string', format: 'date-time' },
     updated_at: { type: 'string', format: 'date-time' }
 };
@@ -148,7 +149,7 @@ async function sessionController(fastify: any) {
                     offset: { type: 'integer', default: 0 }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -307,7 +308,8 @@ async function sessionController(fastify: any) {
                     geofence_radius_meters: { type: 'number' },
                     require_liveness_check: { type: 'boolean' },
                     require_face_match: { type: 'boolean' },
-                    risk_threshold: { type: 'number' }
+                    risk_threshold: { type: 'number' },
+                    qr_code_enabled: { type: 'boolean' }
                 }
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
@@ -373,6 +375,38 @@ async function sessionController(fastify: any) {
             } else {
                 console.error('Error updating session status:', err.message);
                 res.status(500).send({ detail: err.message });
+            }
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.get(`${uri}/:id/qr`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['id'],
+                properties: {
+                    id: { type: 'string' }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const qrPayload = await SessionModel.issueQr(pgClient, req.params.id);
+            res.status(200).send(qrPayload);
+        } catch (err: any) {
+            if (err?.message === 'QR codes can only be issued for active sessions') {
+                res.status(400).send({ detail: err.message });
+            } else if (err?.message === 'QR codes are not enabled for this session') {
+                res.status(400).send({ detail: err.message });
+            } else if (err?.statusCode === 404) {
+                res.status(404).send({ detail: 'Session not found' });
+            } else {
+                console.error('Error generating session QR:', err.message);
+                res.status(500).send({ detail: err.message || 'Failed to generate QR code' });
             }
         } finally {
             pgClient.release();
