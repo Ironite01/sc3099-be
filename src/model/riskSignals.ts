@@ -1,129 +1,123 @@
 import type { PoolClient } from 'pg';
-import { AppError, BadRequestError } from './error.js';
 
-type RiskSignalSeverity = 'low' | 'medium' | 'high' | 'critical';
-
-export type RiskSignalFactor = {
-    type: string;
-    severity?: RiskSignalSeverity;
-    confidence?: number;
-    weight?: number;
-    details?: Record<string, any> | null;
+export enum RiskSignalSeverity {
+    LOW = 'low',
+    MEDIUM = 'medium',
+    HIGH = 'high',
+    CRITICAL = 'critical'
 };
 
-function inferSeverity(weight: number): RiskSignalSeverity {
-    if (weight >= 0.7) return 'critical';
-    if (weight >= 0.5) return 'high';
-    if (weight >= 0.3) return 'medium';
-    return 'low';
+export type RiskSignal = {
+    id: string;
+    checkin_id: string;
+    signal_type: string;
+    severity: RiskSignalSeverity;
+    confidence: number;
+    details: Record<string, any> | null;
+    weight: number;
+    detected_at: Date;
+};
+
+export function normalizeRiskFactors(value: any): any[] {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === 'object') return [value];
+    return [];
 }
 
-function normalizeRiskSignalFactor(factor: RiskSignalFactor): Required<Pick<RiskSignalFactor, 'type' | 'severity' | 'confidence' | 'weight'>> & { details: Record<string, any> | null } {
-    const weight = typeof factor.weight === 'number' ? factor.weight : 0.1;
-    return {
-        type: factor.type,
-        severity: factor.severity || inferSeverity(weight),
-        confidence: typeof factor.confidence === 'number' ? factor.confidence : 1.0,
-        weight,
-        details: factor.details ?? null
-    };
-}
-
-function parseDetails(details: any): Record<string, any> | null {
-    if (!details) return null;
-    if (typeof details === 'object') return details as Record<string, any>;
-    if (typeof details === 'string') {
-        try {
-            return JSON.parse(details) as Record<string, any>;
-        } catch {
-            return null;
-        }
+export function getSignalSeverity(weight: number): RiskSignal['severity'] {
+    const normalizedWeight = Math.abs(weight);
+    if (normalizedWeight >= 0.5) {
+        return RiskSignalSeverity.CRITICAL;
     }
-    return null;
+    if (normalizedWeight >= 0.3) {
+        return RiskSignalSeverity.HIGH;
+    }
+    if (normalizedWeight >= 0.1) {
+        return RiskSignalSeverity.MEDIUM;
+    }
+    return RiskSignalSeverity.LOW;
+}
+
+export function buildRiskSignals(
+    signalBreakdown: Record<string, number>,
+    detectedAt: Date,
+    recommendations: string[]
+): Omit<RiskSignal, 'id' | 'checkin_id'>[] {
+    return Object.entries(signalBreakdown).map(([signalType, rawWeight]) => {
+        const weight = Number(rawWeight) || 0;
+        return {
+            signal_type: signalType,
+            severity: getSignalSeverity(weight),
+            confidence: 1,
+            details: recommendations.length ? { recommendations } : null,
+            weight,
+            detected_at: detectedAt
+        };
+    });
 }
 
 export const RiskSignalModel = {
-    replaceForCheckin: async function replaceForCheckin(pgClient: PoolClient, checkinId: string, factors: RiskSignalFactor[]): Promise<void> {
-        try {
-            await pgClient.query('DELETE FROM risk_signals WHERE checkin_id = $1', [checkinId]);
-
-            for (const factor of factors) {
-                if (!factor?.type) continue;
-                const normalized = normalizeRiskSignalFactor(factor);
-                await pgClient.query(
-                    `INSERT INTO risk_signals (
-						id, checkin_id, signal_type, severity, confidence, details, weight, detected_at
-					) VALUES (
-						gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, NOW()
-					)`,
-                    [
-                        checkinId,
-                        normalized.type,
-                        normalized.severity,
-                        normalized.confidence,
-                        normalized.details ? JSON.stringify(normalized.details) : null,
-                        normalized.weight
-                    ]
-                );
-            }
-        } catch (err: any) {
-            if (err instanceof AppError) throw err;
-            throw new BadRequestError('Database operation failed');
+    insertRiskSignals: async (
+        pgClient: PoolClient,
+        checkinId: string,
+        signals: Omit<RiskSignal, 'id' | 'checkin_id'>[]
+    ): Promise<RiskSignal[]> => {
+        if (!signals.length) {
+            return [];
         }
-    },
 
-    getByCheckinId: async function getByCheckinId(pgClient: PoolClient, checkinId: string): Promise<RiskSignalFactor[]> {
-        try {
-            const { rows } = await pgClient.query(
-                `SELECT signal_type, severity, confidence, details, weight
-				 FROM risk_signals
-				 WHERE checkin_id = $1
-				 ORDER BY detected_at ASC`,
-                [checkinId]
+        const values: any[] = [];
+        const placeholders = signals.map((signal, index) => {
+            const baseIndex = index * 7;
+            values.push(
+                checkinId,
+                signal.signal_type,
+                signal.severity,
+                signal.confidence,
+                signal.details ? JSON.stringify(signal.details) : null,
+                signal.weight,
+                signal.detected_at
             );
+            return `(gen_random_uuid()::text, $${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}::jsonb, $${baseIndex + 6}, $${baseIndex + 7})`;
+        });
 
-            return rows.map((row: any) => ({
-                type: row.signal_type,
-                severity: row.severity,
-                confidence: row.confidence,
-                details: parseDetails(row.details),
-                weight: row.weight
-            }));
-        } catch (err: any) {
-            if (err instanceof AppError) throw err;
-            throw new BadRequestError('Database operation failed');
-        }
+        const { rows } = await pgClient.query(
+            `INSERT INTO risk_signals (
+                id,
+                checkin_id,
+                signal_type,
+                severity,
+                confidence,
+                details,
+                weight,
+                detected_at
+            ) VALUES ${placeholders.join(', ')}
+            RETURNING id, checkin_id, signal_type, severity, confidence, details, weight, detected_at`,
+            values
+        );
+
+        return rows as RiskSignal[];
     },
-
-    getByCheckinIds: async function getByCheckinIds(pgClient: PoolClient, checkinIds: string[]): Promise<Map<string, RiskSignalFactor[]>> {
-        try {
-            if (checkinIds.length === 0) return new Map();
-
-            const { rows } = await pgClient.query(
-                `SELECT checkin_id, signal_type, severity, confidence, details, weight
-				 FROM risk_signals
-				 WHERE checkin_id = ANY($1::text[])
-				 ORDER BY detected_at ASC`,
-                [checkinIds]
-            );
-
-            const grouped = new Map<string, RiskSignalFactor[]>();
-            for (const row of rows) {
-                const id = row.checkin_id as string;
-                const existing = grouped.get(id) || [];
-                existing.push({
-                    type: row.signal_type,
-                    severity: row.severity,
-                    confidence: row.confidence,
-                    details: parseDetails(row.details),
-                    weight: row.weight
-                });
-                grouped.set(id, existing);
-            }
-            return grouped;
-        } catch (err: any) {
-            if (err instanceof AppError) throw err;
-            throw new BadRequestError('Database operation failed');
+    getRiskSignalsByCheckinIds: async (pgClient: PoolClient, checkinIds: string[]): Promise<Map<string, RiskSignal[]>> => {
+        const signalMap = new Map<string, RiskSignal[]>();
+        if (!checkinIds.length) {
+            return signalMap;
         }
+
+        const { rows } = await pgClient.query(
+            `SELECT id, checkin_id, signal_type, severity, confidence, details, weight, detected_at
+             FROM risk_signals
+             WHERE checkin_id = ANY($1::text[])
+             ORDER BY detected_at ASC, id ASC`,
+            [checkinIds]
+        );
+
+        for (const row of rows as RiskSignal[]) {
+            const existing = signalMap.get(row.checkin_id) || [];
+            existing.push(row);
+            signalMap.set(row.checkin_id, existing);
+        }
+
+        return signalMap;
     }
 };

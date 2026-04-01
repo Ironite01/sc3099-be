@@ -11,6 +11,7 @@ import { isBase64 } from '../helpers/regex.js';
 import { APPEAL_WINDOW_MS, DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
 import { parseQrPayload, secureEqualsHex, signQrPayload } from '../helpers/qr.js';
 import getRiskLevel from '../helpers/getRiskLevels.js';
+import { buildRiskSignals, getSignalSeverity, normalizeRiskFactors, RiskSignalModel, type RiskSignal } from './riskSignals.js';
 
 export enum CHECKIN_STATUS {
     PENDING = 'pending',
@@ -47,120 +48,6 @@ export type Checkin = {
     face_match_score?: number | null;
     face_match_passed?: boolean | null;
 };
-
-export type RiskSignal = {
-    id: string;
-    checkin_id: string;
-    signal_type: string;
-    severity: 'low' | 'medium' | 'high' | 'critical';
-    confidence: number;
-    details: Record<string, any> | null;
-    weight: number;
-    detected_at: Date;
-};
-
-function normalizeRiskFactors(value: any): any[] {
-    if (Array.isArray(value)) return value;
-    if (value && typeof value === 'object') return [value];
-    return [];
-}
-
-function getSignalSeverity(weight: number): RiskSignal['severity'] {
-    const normalizedWeight = Math.abs(weight);
-    if (normalizedWeight >= 0.5) {
-        return 'critical';
-    }
-    if (normalizedWeight >= 0.3) {
-        return 'high';
-    }
-    if (normalizedWeight >= 0.1) {
-        return 'medium';
-    }
-    return 'low';
-}
-
-function buildRiskSignals(
-    signalBreakdown: Record<string, number>,
-    detectedAt: Date,
-    recommendations: string[]
-): Omit<RiskSignal, 'id' | 'checkin_id'>[] {
-    return Object.entries(signalBreakdown).map(([signalType, rawWeight]) => {
-        const weight = Number(rawWeight) || 0;
-        return {
-            signal_type: signalType,
-            severity: getSignalSeverity(weight),
-            confidence: 1,
-            details: recommendations.length ? { recommendations } : null,
-            weight,
-            detected_at: detectedAt
-        };
-    });
-}
-
-async function insertRiskSignals(
-    pgClient: PoolClient,
-    checkinId: string,
-    signals: Omit<RiskSignal, 'id' | 'checkin_id'>[]
-): Promise<RiskSignal[]> {
-    if (!signals.length) {
-        return [];
-    }
-
-    const values: any[] = [];
-    const placeholders = signals.map((signal, index) => {
-        const baseIndex = index * 7;
-        values.push(
-            checkinId,
-            signal.signal_type,
-            signal.severity,
-            signal.confidence,
-            signal.details ? JSON.stringify(signal.details) : null,
-            signal.weight,
-            signal.detected_at
-        );
-        return `(gen_random_uuid()::text, $${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}::jsonb, $${baseIndex + 6}, $${baseIndex + 7})`;
-    });
-
-    const { rows } = await pgClient.query(
-        `INSERT INTO risk_signals (
-            id,
-            checkin_id,
-            signal_type,
-            severity,
-            confidence,
-            details,
-            weight,
-            detected_at
-        ) VALUES ${placeholders.join(', ')}
-        RETURNING id, checkin_id, signal_type, severity, confidence, details, weight, detected_at`,
-        values
-    );
-
-    return rows as RiskSignal[];
-}
-
-async function getRiskSignalsByCheckinIds(pgClient: PoolClient, checkinIds: string[]): Promise<Map<string, RiskSignal[]>> {
-    const signalMap = new Map<string, RiskSignal[]>();
-    if (!checkinIds.length) {
-        return signalMap;
-    }
-
-    const { rows } = await pgClient.query(
-        `SELECT id, checkin_id, signal_type, severity, confidence, details, weight, detected_at
-         FROM risk_signals
-         WHERE checkin_id = ANY($1::text[])
-         ORDER BY detected_at ASC, id ASC`,
-        [checkinIds]
-    );
-
-    for (const row of rows as RiskSignal[]) {
-        const existing = signalMap.get(row.checkin_id) || [];
-        existing.push(row);
-        signalMap.set(row.checkin_id, existing);
-    }
-
-    return signalMap;
-}
 
 export const CheckinModel = {
     create: async function create(
@@ -380,7 +267,7 @@ export const CheckinModel = {
                     );
 
                     // 8. Update relevant records after check in
-                    const persistedRiskSignals = await insertRiskSignals(pgClient, rows[0].id as string, riskSignals);
+                    const persistedRiskSignals = await RiskSignalModel.insertRiskSignals(pgClient, rows[0].id as string, riskSignals);
 
                     await DeviceModel.updateAfterCheckin(pgClient, device.id, getRiskLevel(risk_score));
 
@@ -517,7 +404,7 @@ export const CheckinModel = {
                 params
             );
 
-            const signalMap = await getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
+            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
             const items = rows.map((row) => ({
                 ...row,
                 risk_factors: normalizeRiskFactors(row.risk_factors),
@@ -631,7 +518,7 @@ export const CheckinModel = {
                 student_name: string;
                 student_email: string;
             });
-            const signalMap = await getRiskSignalsByCheckinIds(pgClient, [result.id]);
+            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(pgClient, [result.id]);
             result.risk_factors = normalizeRiskFactors(result.risk_factors);
             result.risk_signals = signalMap.get(result.id) || [];
             return result;
@@ -667,7 +554,7 @@ export const CheckinModel = {
                 user.role !== USER_ROLE_TYPES.ADMIN ? [sessionId, user.sub] : [sessionId]
             );
 
-            const signalMap = await getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
+            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
             return rows.map((row) => ({
                 ...row,
                 risk_factors: normalizeRiskFactors(row.risk_factors),
