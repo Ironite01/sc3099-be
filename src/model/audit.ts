@@ -1,11 +1,32 @@
 import type { PoolClient } from 'pg';
 import { AppError, BadRequestError } from './error.js';
+import { DeviceModel } from './device.js';
 
+export enum AUDIT_ACTIONS {
+    LOGIN_SUCCESS = 'login_success',
+    LOGIN_FAILED = 'login_failed',
+    LOGOUT = 'logout',
+    USER_CREATED = 'user_created',
+    USER_UPDATED = 'user_updated',
+    CHECKIN_ATTEMPTED = 'checkin_attempted',
+    CHECKIN_APPROVED = 'checkin_approved',
+    CHECKIN_FLAGGED = 'checkin_flagged',
+    CHECKIN_REJECTED = 'checkin_rejected',
+    CHECKIN_APPEALED = 'checkin_appealed',
+    CHECKIN_REVIEWED = 'checkin_reviewed',
+    SESSION_CREATED = 'session_created',
+    SESSION_UPDATED = 'session_updated',
+    SESSION_DELETED = 'session_deleted',
+    ENROLLMENT_ADDED = 'enrollment_added',
+    ENROLLMENT_REMOVED = 'enrollment_removed',
+    DEVICE_REGISTERED = 'device_registered',
+    FACE_ENROLLED = 'face_enrolled'
+}
 
 export const AuditModel = {
     getFilteredLogs: async function (pgClient: PoolClient, filters: {
         user_id?: string;
-        action?: string;
+        action?: AUDIT_ACTIONS;
         resource_type?: string;
         resource_id?: string;
         success?: boolean;
@@ -109,7 +130,6 @@ export const AuditModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-
     getSummary: async function (pgClient: PoolClient, days = 7) {
         try {
             const cutoff = new Date();
@@ -143,6 +163,40 @@ export const AuditModel = {
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
+        }
+    },
+    log: async (
+        pgClient: PoolClient,
+        data:
+            {
+                userId: string,
+                action: AUDIT_ACTIONS,
+                resourceType: string,
+                resourceId: string,
+                ipAddress: string,
+                userAgent: string,
+                deviceId?: string,
+                success: boolean,
+                details?: Record<string, any>
+            }) => {
+        try {
+            let { userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, details } = data;
+            if (!deviceId && action !== AUDIT_ACTIONS.USER_CREATED) {
+                const devices = await DeviceModel.getByUserId(pgClient, userId);
+                if (devices.length > 0) {
+                    deviceId = devices[0]!.id;
+                } else {
+                    console.error(`No device found for user with id ${userId} during audit logging`);
+                }
+            }
+            await pgClient.query(
+                `INSERT INTO audit_logs 
+                    (user_id, action, resource_type, resource_id, ip_address, user_agent, device_id, success, details, timestamp)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+                [userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, JSON.stringify(details || {})]
+            );
+        } catch (error) {
+            console.error('Failed to insert audit log:', error);
         }
     }
 };

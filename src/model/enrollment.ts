@@ -410,7 +410,7 @@ export const EnrollmentModel = {
                        AND e.course_id = c.id
                        AND e.is_active = TRUE
                        AND c.instructor_id = $2
-                     RETURNING e.id`,
+                     RETURNING e.student_id, e.course_id`,
                     [enrollmentId, user.id]
                 );
             }
@@ -418,6 +418,8 @@ export const EnrollmentModel = {
             if (result.rows.length === 0) {
                 throw new NotFoundError('Enrollment not found');
             }
+
+            return result.rows[0] as { student_id: string; course_id: string };
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');

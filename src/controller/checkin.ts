@@ -2,28 +2,13 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
-import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from '../model/error.js';
 import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
+import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
-
-function normalizeRiskFactors(value: any): any[] {
-    if (Array.isArray(value)) return value;
-    if (value && typeof value === 'object') return [value];
-    return [];
-}
-
-function extractMetadata(riskFactors: any[]): Record<string, any> {
-    const meta = riskFactors.find((f) => f && f.type === 'metadata');
-    return meta && typeof meta === 'object' ? (meta.data || {}) : {};
-}
-
-function mergeMetadata(riskFactors: any[], patch: Record<string, any>): any[] {
-    const cleaned = normalizeRiskFactors(riskFactors).filter((f) => !(f && f.type === 'metadata'));
-    return [...cleaned, { type: 'metadata', data: patch }];
-}
 
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
+    const resourceType = 'checkin';
 
     fastify.post(uri, {
         schema: {
@@ -64,23 +49,78 @@ async function checkinController(fastify: FastifyInstance) {
             liveness_challenge_response,
             qr_code
         };
-        const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
 
-        res.status(201).send({
-            id: checkin.id,
-            session_id: checkin.session_id,
-            student_id: checkin.student_id,
-            status: checkin.status,
-            checked_in_at: checkin.checked_in_at,
-            latitude: checkin.latitude,
-            longitude: checkin.longitude,
-            distance_from_venue_meters: checkin.distance_from_venue_meters,
-            liveness_passed: checkin.liveness_passed,
-            liveness_score: checkin.liveness_score,
-            risk_score: checkin.risk_score,
-            risk_factors: checkin.risk_factors,
-            risk_signals: checkin.risk_signals || []
-        });
+        const pgClient = await fastify.pg.connect();
+        try {
+            const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
+
+            let auditAction = AUDIT_ACTIONS.CHECKIN_ATTEMPTED;
+            switch (checkin.status) {
+                case CHECKIN_STATUS.APPROVED:
+                    auditAction = AUDIT_ACTIONS.CHECKIN_APPROVED;
+                    break;
+                case CHECKIN_STATUS.FLAGGED:
+                    auditAction = AUDIT_ACTIONS.CHECKIN_FLAGGED;
+                    break;
+                case CHECKIN_STATUS.REJECTED:
+                    auditAction = AUDIT_ACTIONS.CHECKIN_REJECTED;
+                    break;
+            }
+
+            await AuditModel.log(pgClient, {
+                userId,
+                action: auditAction,
+                resourceType,
+                resourceId: checkin.id,
+                ipAddress: ipAddr,
+                userAgent: userAgent || '',
+                success: true,
+                details: {
+                    session_id: checkin.session_id,
+                    risk_score: checkin.risk_score,
+                    liveness_passed: checkin.liveness_passed,
+                    distance_meters: checkin.distance_from_venue_meters
+                }
+            });
+
+
+            res.status(201).send({
+                id: checkin.id,
+                session_id: checkin.session_id,
+                student_id: checkin.student_id,
+                status: checkin.status,
+                checked_in_at: checkin.checked_in_at,
+                latitude: checkin.latitude,
+                longitude: checkin.longitude,
+                distance_from_venue_meters: checkin.distance_from_venue_meters,
+                liveness_passed: checkin.liveness_passed,
+                liveness_score: checkin.liveness_score,
+                risk_score: checkin.risk_score,
+                risk_factors: checkin.risk_factors,
+                risk_signals: checkin.risk_signals || []
+            });
+        } catch (err) {
+            await AuditModel.log(pgClient, {
+                userId,
+                action: AUDIT_ACTIONS.CHECKIN_ATTEMPTED,
+                resourceType,
+                resourceId: session_id,
+                ipAddress: ipAddr,
+                userAgent: userAgent || '',
+                success: true,
+                details: {
+                    qr_code,
+                    liveness_challenge_response,
+                    device_fingerprint,
+                    latitude,
+                    longitude,
+                    location_accuracy_meters
+                }
+            });
+            throw err;
+        } finally {
+            pgClient.release();
+        }
     });
 
     fastify.get(uri, {
@@ -276,6 +316,21 @@ async function checkinController(fastify: FastifyInstance) {
 
             const result = await CheckinModel.appeal(pgClient, studentId, id, appeal_reason);
 
+            await AuditModel.log(pgClient, {
+                userId: (req.user as any)?.sub,
+                action: AUDIT_ACTIONS.CHECKIN_APPEALED,
+                resourceType,
+                resourceId: id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: {
+                    studentId,
+                    appeal_reason,
+                    appealed_at: result.appealed_at
+                }
+            });
+
             res.status(200).send({
                 id: result.id,
                 status: result.status,
@@ -313,6 +368,27 @@ async function checkinController(fastify: FastifyInstance) {
                 user: req.user as any,
                 status: (req.body as any).status,
                 notes: (req.body as any).review_notes
+            });
+
+            const auditAction = result.status === CHECKIN_STATUS.APPROVED
+                ? AUDIT_ACTIONS.CHECKIN_APPROVED
+                : result.status === CHECKIN_STATUS.REJECTED
+                    ? AUDIT_ACTIONS.CHECKIN_REJECTED
+                    : AUDIT_ACTIONS.CHECKIN_REVIEWED;
+
+            await AuditModel.log(pgClient, {
+                userId: (req.user as any)?.sub,
+                action: auditAction,
+                resourceType,
+                resourceId: result.id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: {
+                    new_status: result.status,
+                    reviewed_at: result.reviewed_at,
+                    review_notes: result.review_notes
+                }
             });
 
             res.status(200).send({

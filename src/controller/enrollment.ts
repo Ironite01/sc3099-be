@@ -1,11 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { USER_ROLE_TYPES } from "../model/user.js";
+import { AUDIT_ACTIONS, AuditModel } from "../model/audit.js";
 import { EnrollmentModel } from "../model/enrollment.js";
 import { BASE_URL } from "../helpers/constants.js";
 
 function enrollmentController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/enrollments`;
+    const resourceType = 'enrollment';
 
     fastify.get(`${uri}/my-enrollments`, { preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
@@ -96,6 +98,17 @@ function enrollmentController(fastify: FastifyInstance) {
 
             const enrollment = await EnrollmentModel.create(pgClient, { id: userId, role: userRole }, { studentId: student_id, courseId: course_id });
 
+            await AuditModel.log(pgClient, {
+                userId: userId,
+                action: AUDIT_ACTIONS.ENROLLMENT_ADDED,
+                resourceType,
+                resourceId: enrollment.id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
+            });
+
             res.status(201).send({
                 id: enrollment.id,
                 student_id: enrollment.student_id,
@@ -156,7 +169,20 @@ function enrollmentController(fastify: FastifyInstance) {
         try {
             const user = req.user as { sub: string; role: USER_ROLE_TYPES };
             const enrollmentId = (req.params as { enrollment_id: string }).enrollment_id;
-            await EnrollmentModel.delete(pgClient, { id: user.sub, role: user.role }, enrollmentId);
+            const enrollment = await EnrollmentModel.delete(pgClient, { id: user.sub, role: user.role }, enrollmentId);
+
+            if (enrollment) {
+                await AuditModel.log(pgClient, {
+                    userId: user.sub,
+                    action: AUDIT_ACTIONS.ENROLLMENT_REMOVED,
+                    resourceType,
+                    resourceId: enrollmentId,
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'] || '',
+                    success: true,
+                    details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
+                });
+            }
 
             res.status(204).send();
         } finally {

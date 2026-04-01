@@ -2,10 +2,12 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
 import { NotFoundError, UnauthorizedError } from "../model/error.js";
+import { AUDIT_ACTIONS, AuditModel } from "../model/audit.js";
 import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
 
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
+    const resourceType = 'user';
 
     fastify.get(`${uri}/`,
         {
@@ -77,6 +79,17 @@ async function userController(fastify: FastifyInstance) {
                 throw new NotFoundError();
             }
             const updatedUser = await UserModel.updateById(pgClient, userId, req.body as any);
+
+            await AuditModel.log(pgClient, {
+                userId,
+                action: AUDIT_ACTIONS.USER_UPDATED,
+                resourceType,
+                resourceId: userId,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { updated_fields: Object.keys(req.body as any) }
+            });
 
             res.status(200).send({
                 id: updatedUser.id,
@@ -199,6 +212,20 @@ async function userController(fastify: FastifyInstance) {
             const userId = (req?.user as any).sub;
 
             const u = await UserModel.faceEnroll(pgClient, userId, (req.body as { image: string }).image);
+
+            await AuditModel.log(pgClient, {
+                userId,
+                action: AUDIT_ACTIONS.FACE_ENROLLED,
+                resourceType,
+                resourceId: userId,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: {
+                    quality_score: u.quality_score,
+                    face_enrolled: u.face_enrolled
+                }
+            });
 
             res.status(200).send(u);
         } finally {

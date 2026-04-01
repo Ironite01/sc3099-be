@@ -1,8 +1,3 @@
-/**
- * Prometheus metrics plugin for the SAIV backend.
- * Exposes /metrics endpoint (no auth) for Prometheus scraping.
- * Also exports counters/histograms for use by other controllers.
- */
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -13,11 +8,9 @@ import {
     Gauge,
 } from 'prom-client';
 
-// Use a dedicated registry so we don't conflict with any other library
 export const registry = new Registry();
 collectDefaultMetrics({ register: registry, prefix: 'saiv_' });
 
-// ── Custom metrics ──────────────────────────────────────────────────────────
 
 export const loginTotal = new Counter({
     name: 'saiv_login_total',
@@ -73,8 +66,6 @@ export const activeSessionsGauge = new Gauge({
     help: 'Number of currently active sessions',
     registers: [registry],
 });
-
-// ── Fastify plugin ──────────────────────────────────────────────────────────
 
 async function metricsPlugin(fastify: FastifyInstance) {
     // Track HTTP request durations via lifecycle hooks

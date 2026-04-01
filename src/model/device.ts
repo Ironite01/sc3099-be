@@ -149,10 +149,10 @@ export const DeviceModel = {
             }
         });
     },
-    getByUserId: async function getByUserId(pgClient: PoolClient, userId: string) {
+    getByUserId: async function getByUserId(pgClient: PoolClient, userId: string, isActiveOnly = false) {
         try {
             const { rows } = await pgClient.query(
-                `SELECT * FROM devices WHERE user_id = $1 ORDER BY last_seen_at DESC`,
+                `SELECT * FROM devices WHERE user_id = $1 ${isActiveOnly ? 'AND is_active = true' : ''} ORDER BY last_seen_at DESC`,
                 [userId]
             );
 

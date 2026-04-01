@@ -2,11 +2,13 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
 import { DeviceModel, PLATFORM_TYPES } from "../model/device.js";
+import { AUDIT_ACTIONS, AuditModel } from "../model/audit.js";
 import { USER_ROLE_TYPES } from "../model/user.js";
 // import { deviceRegistrationTotal } from '../services/metrics.js';
 
 async function deviceController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/devices`;
+    const resourceType = 'device';
 
     // TODO: Confirm if this API is in use and refactor
     fastify.get(`${uri}/`, {
@@ -137,6 +139,28 @@ async function deviceController(fastify: FastifyInstance) {
         const body: any = req.body;
 
         const device = await DeviceModel.register(fastify.pg.transact, userId, body);
+
+        const pgClient = await fastify.pg.connect();
+        try {
+            await AuditModel.log(pgClient, {
+                userId: userId,
+                action: AUDIT_ACTIONS.DEVICE_REGISTERED,
+                resourceType,
+                resourceId: device.id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                deviceId: device.id,
+                success: true,
+                details: {
+                    device_name: device.device_name,
+                    platform: device.platform,
+                    is_emulator: device.is_emulator,
+                    is_rooted: device.is_rooted_jailbroken
+                }
+            });
+        } finally {
+            pgClient.release();
+        }
 
         res.status(201).send({
             id: device.id,

@@ -521,15 +521,17 @@ export const SessionModel = {
 
             let sessionRes;
             if (role === USER_ROLE_TYPES.INSTRUCTOR || role === USER_ROLE_TYPES.TA) {
-                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND instructor_id = $2 AND status = $3', [id, userId, SESSION_STATUS.SCHEDULED]);
+                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND instructor_id = $2 AND status = $3 RETURNING *', [id, userId, SESSION_STATUS.SCHEDULED]);
             } else {
-                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND status = $2', [id, SESSION_STATUS.SCHEDULED]);
+                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND status = $2 RETURNING *', [id, SESSION_STATUS.SCHEDULED]);
             }
             const { rows } = sessionRes;
 
             if (rows.length === 0) {
                 throw new NotFoundError();
             }
+
+            return sessionRes.rows[0] as Session;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');

@@ -3,10 +3,12 @@ import fp from 'fastify-plugin';
 import { USER_ROLE_TYPES, UserModel } from '../model/user.js';
 import { ACCESS_TOKEN_TTL, BASE_URL, REFRESH_TOKEN_TTL } from '../helpers/constants.js';
 import { UnauthorizedError } from '../model/error.js';
-// import { loginTotal, registrationTotal } from '../services/metrics.js';
+import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
+import { loginTotal, registrationTotal } from '../services/metrics.js';
 
 async function authController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/auth`;
+    const resourceType = 'auth';
 
     fastify.post(`${uri}/register`, {
         schema: {
@@ -49,7 +51,17 @@ async function authController(fastify: FastifyInstance) {
         try {
             const user = await UserModel.create(pgClient, req.body as any);
 
-            // registrationTotal.inc({ role });
+            await AuditModel.log(pgClient, {
+                userId: user.id,
+                action: AUDIT_ACTIONS.USER_CREATED,
+                resourceType,
+                resourceId: user.id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { email: user.email, role: user.role }
+            });
+            registrationTotal.inc({ role: user.role });
 
             res.status(201).send({
                 id: user.id,
@@ -92,9 +104,31 @@ async function authController(fastify: FastifyInstance) {
             let user: any;
             try {
                 user = await UserModel.login(pgClient, email, passwordClaim);
-                // loginTotal.inc({ status: 'success' });
+                loginTotal.inc({ status: 'success' });
+
+                await AuditModel.log(pgClient, {
+                    userId: user.id,
+                    action: AUDIT_ACTIONS.LOGIN_SUCCESS,
+                    resourceType,
+                    resourceId: user.id,
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'] || '',
+                    success: true,
+                    details: { email: user.email }
+                });
             } catch (err) {
-                // loginTotal.inc({ status: 'failure' });
+                loginTotal.inc({ status: 'failure' });
+
+                await AuditModel.log(pgClient, {
+                    userId: email,
+                    action: AUDIT_ACTIONS.LOGIN_FAILED,
+                    resourceType,
+                    resourceId: email,
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'] || '',
+                    success: false,
+                    details: { reason: 'invalid_credentials' }
+                });
                 throw err;
             }
 
@@ -184,7 +218,25 @@ async function authController(fastify: FastifyInstance) {
     });
 
     // Extra endpoint
-    fastify.post(`${uri}/logout`, { preHandler: [fastify.rateLimit()] }, async (_req: FastifyRequest, res: FastifyReply) => {
+    fastify.post(`${uri}/logout`, { preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userId = (req.user as any)?.sub;
+            if (userId) {
+                await AuditModel.log(pgClient, {
+                    userId: userId,
+                    action: AUDIT_ACTIONS.LOGOUT,
+                    resourceType,
+                    resourceId: userId,
+                    ipAddress: req.ip,
+                    userAgent: req.headers['user-agent'] || '',
+                    success: true
+                });
+            }
+        } finally {
+            pgClient.release();
+        }
+
         res.clearCookie('access_token', {
             path: '/',
             httpOnly: true,
