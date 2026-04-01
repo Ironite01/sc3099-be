@@ -51,9 +51,9 @@ function enrollmentController(fastify: FastifyInstance) {
         async (req: FastifyRequest, res: FastifyReply) => {
             const pgClient = await fastify.pg.connect();
             try {
-                const userId = (req.user as any)?.sub;
+                const user = req.user as { sub: string; role: USER_ROLE_TYPES };
                 const courseId = (req.params as { courseId: string }).courseId;
-                const results = await EnrollmentModel.getStudentsByCourseEnrollment(pgClient, userId, courseId, req.query as { is_active?: boolean, search?: string });
+                const results = await EnrollmentModel.getStudentsByCourseEnrollment(pgClient, { id: user.sub, role: user.role }, courseId, req.query as { is_active?: boolean, search?: string });
                 const students = results.students;
 
                 res.status(200).send({
@@ -86,7 +86,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 required: ["student_id", "course_id"]
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -124,15 +124,18 @@ function enrollmentController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
+        const userId = (req.user as any)?.sub;
+        const userRole = (req.user as any)?.role;
         const { course_id, student_emails, create_accounts = false } = req.body as any;
-        const results = await EnrollmentModel.bulkCreate(fastify.pg.transact, course_id, student_emails, create_accounts);
+        const results = await EnrollmentModel.bulkCreate(fastify.pg.transact, { id: userId, role: userRole }, course_id, student_emails, create_accounts);
         res.status(200).send({
             course_id,
             enrolled: results.enrolled,
             already_enrolled: results.already_enrolled,
             not_found: results.not_found,
+            created: results.created,
             details: results.details
         });
     });
@@ -151,8 +154,9 @@ function enrollmentController(fastify: FastifyInstance) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
+            const user = req.user as { sub: string; role: USER_ROLE_TYPES };
             const enrollmentId = (req.params as { enrollment_id: string }).enrollment_id;
-            await EnrollmentModel.delete(pgClient, enrollmentId);
+            await EnrollmentModel.delete(pgClient, { id: user.sub, role: user.role }, enrollmentId);
 
             res.status(204).send();
         } finally {
