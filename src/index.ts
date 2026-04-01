@@ -9,11 +9,10 @@ import pg from './services/pg.js';
 import auth from './services/auth.js';
 import cors from './services/cors.js';
 import errorHandler from './services/errorHandler.js';
-import schemaBootstrap from './services/schema.js';
 import redis from './services/redis.js';
 import rateLimiter from './services/rateLimiter.js';
 import { MlServices } from './services/ml/index.js';
-// import metricsPlugin from './services/metrics.js';
+import metricsPlugin from './services/metrics.js';
 
 const server = fastify({
     ignoreTrailingSlash: true,
@@ -37,11 +36,11 @@ try {
         .register(rateLimiter)
         .register(auth)
         .register(pg)
-        .register(schemaBootstrap)
         .register(fastifyFormbody)
         .register(cors)
         .register(controller)
-        .register(errorHandler);
+        .register(errorHandler)
+        .register(metricsPlugin);
 
     const address = await server.listen({ port: server.config.PORT!!, host: server.config.HOST!! });
     console.log(`Server listening at ${address}`);

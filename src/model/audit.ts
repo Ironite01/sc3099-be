@@ -191,8 +191,8 @@ export const AuditModel = {
             }
             await pgClient.query(
                 `INSERT INTO audit_logs 
-                    (user_id, action, resource_type, resource_id, ip_address, user_agent, device_id, success, details, timestamp)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+                    (id, user_id, action, resource_type, resource_id, ip_address, user_agent, device_id, success, details, timestamp)
+                 VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
                 [userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, JSON.stringify(details || {})]
             );
         } catch (error) {
