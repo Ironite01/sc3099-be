@@ -5,7 +5,6 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from '../model/error.js';
 import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
-import { STATUS_CODES } from 'node:http';
 
 function normalizeRiskFactors(value: any): any[] {
     if (Array.isArray(value)) return value;
@@ -79,7 +78,8 @@ async function checkinController(fastify: FastifyInstance) {
             liveness_passed: checkin.liveness_passed,
             liveness_score: checkin.liveness_score,
             risk_score: checkin.risk_score,
-            risk_factors: checkin.risk_factors
+            risk_factors: checkin.risk_factors,
+            risk_signals: checkin.risk_signals || []
         });
     });
 
@@ -174,21 +174,20 @@ async function checkinController(fastify: FastifyInstance) {
             const { sessionId } = req.params as { sessionId: string };
             const checkins = await CheckinModel.getBySessionIdAndUser(pgClient, req.user as any, sessionId);
 
-            res.status(200).send(checkins.map((c) => ([
-                {
-                    "id": c.id,
-                    "student_id": c.student_id,
-                    "student_name": c.student_name,
-                    "student_email": c.student_email,
-                    "status": c.status,
-                    "checked_in_at": c.checked_in_at,
-                    "distance_from_venue_meters": c.distance_from_venue_meters,
-                    "risk_score": c.risk_score,
-                    "risk_factors": c.risk_factors,
-                    "liveness_passed": c.liveness_passed,
-                    "device_trusted": c.device_is_trusted
-                }
-            ])));
+            res.status(200).send(checkins.map((c) => ({
+                id: c.id,
+                student_id: c.student_id,
+                student_name: c.student_name,
+                student_email: c.student_email,
+                status: c.status,
+                checked_in_at: c.checked_in_at,
+                distance_from_venue_meters: c.distance_from_venue_meters,
+                risk_score: c.risk_score,
+                risk_factors: c.risk_factors,
+                risk_signals: c.risk_signals || [],
+                liveness_passed: c.liveness_passed,
+                device_trusted: c.device_is_trusted
+            })));
         } finally {
             pgClient.release();
         }
@@ -212,8 +211,8 @@ async function checkinController(fastify: FastifyInstance) {
         try {
             const result = await CheckinModel.getFilteredCheckins(pgClient, req.user as any, {
                 ...req.query as any,
-                status: [STATUS_CODES.FLAGGED, STATUS_CODES.APPEALED]
-            })
+                status: [CHECKIN_STATUS.FLAGGED, CHECKIN_STATUS.APPEALED]
+            });
             res.status(200).send({
                 items: result.items,
                 total: result.total,
@@ -310,7 +309,11 @@ async function checkinController(fastify: FastifyInstance) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const result = await CheckinModel.review(pgClient, (req.params as any).id, { ...(req.body as any), reviewed_by_id: req.user as any });
+            const result = await CheckinModel.review(pgClient, (req.params as any).id, {
+                user: req.user as any,
+                status: (req.body as any).status,
+                notes: (req.body as any).review_notes
+            });
 
             res.status(200).send({
                 id: result.id,
