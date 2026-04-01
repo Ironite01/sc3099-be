@@ -288,7 +288,41 @@ async function checkinController(fastify: FastifyInstance) {
         }
     });
 
+    fastify.post(`${uri}/:id/review`, {
+        preHandler: [fastify.authorize(2), fastify.rateLimit()],
+        schema: {
+            params: {
+                type: 'object',
+                required: ['id'],
+                properties: {
+                    id: { type: 'string' }
+                }
+            },
+            body: {
+                type: 'object',
+                required: ['status'],
+                properties: {
+                    status: { type: 'string', enum: [CHECKIN_STATUS.APPROVED, CHECKIN_STATUS.REJECTED] },
+                    review_notes: { type: 'string', maxLength: 2000 }
+                }
+            }
+        }
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const result = await CheckinModel.review(pgClient, (req.params as any).id, { ...(req.body as any), reviewed_by_id: req.user as any });
 
+            res.status(200).send({
+                id: result.id,
+                status: result.status,
+                reviewed_by_id: result.reviewed_by_id,
+                reviewed_at: result.reviewed_at,
+                review_notes: result.review_notes
+            });
+        } finally {
+            pgClient.release();
+        }
+    });
 }
 
 export default fp(checkinController);

@@ -185,7 +185,7 @@
   - Constraints: 7-day appeal window, one appeal per check-in
   - Requires: Student (check-in owner)
 
-- [ ] **POST /checkins/{id}/review** - Instructor reviews flagged check-in
+- [x] **POST /checkins/{id}/review** - Instructor reviews flagged check-in
   - Request: status (approved/rejected), review_notes
   - Requires: Instructor/TA role
 

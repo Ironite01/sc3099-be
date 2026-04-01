@@ -582,5 +582,33 @@ export const CheckinModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
+    review: async (pgClient: PoolClient, id: string, { user, status, notes }: { user: { sub: string, role: USER_ROLE_TYPES }, status: CHECKIN_STATUS, notes: string }) => {
+        try {
+            const currentCheckin = await CheckinModel.getByIdAndUser(pgClient, user, id);
+            if (!currentCheckin) {
+                throw new NotFoundError();
+            }
+            if (![CHECKIN_STATUS.FLAGGED, CHECKIN_STATUS.APPEALED].includes(currentCheckin.status)) {
+                throw new BadRequestError('Only flagged or appealed check-ins can be reviewed');
+            }
 
+            await pgClient.query(
+                `UPDATE checkins
+                 SET status = $2, reviewed_by_id = $3, reviewed_at = NOW(), review_notes = $4
+                 WHERE id = $1`,
+                [id, status, user.sub, notes]
+            );
+
+            return {
+                id,
+                status,
+                reviewed_by_id: user.sub,
+                reviewed_at: new Date().toISOString(),
+                review_notes: notes
+            }
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    }
 };
