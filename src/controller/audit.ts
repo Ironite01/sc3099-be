@@ -26,18 +26,7 @@ async function auditController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const query = req.query as {
-            user_id?: string;
-            action?: string;
-            resource_type?: string;
-            resource_id?: string;
-            success?: boolean;
-            start_date?: string;
-            end_date?: string;
-            search?: string;
-            limit?: number;
-            offset?: number;
-        };
+        const query = req.query as any;
         const pgClient = await fastify.pg.connect();
         try {
             const result = await AuditModel.getFilteredLogs(pgClient as any, query);
