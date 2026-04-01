@@ -130,12 +130,10 @@ async function ensureSessionTimezoneColumns(fastify: any) {
         pgClient.release();
     }
 }
-
 async function sessionController(fastify: any) {
-    const adminUri = '/api/v1/admin/sessions';
     const uri = `${BASE_URL}/sessions`;
 
-    fastify.get(uri, {
+    fastify.get(`${uri}/`, {
         schema: {
             querystring: {
                 type: 'object',
@@ -244,7 +242,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.post(uri, {
+    fastify.post(`${uri}/`, {
         schema: {
             body: {
                 type: 'object',
@@ -353,34 +351,6 @@ async function sessionController(fastify: any) {
             pgClient.release();
         }
     });
-
-    // TODO: Review all below
-    fastify.patch(adminUri + '/:id/status', { schema: updateStatusSchema, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest<{ Params: { id: string }, Body: { status: string } }>, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            let session = await SessionModel.updateStatus(pgClient, req.params.id, (req.body as any).status);
-            if (!session) {
-                res.status(404).send({ detail: 'Session not found' });
-                return;
-            }
-
-            if (req.body.status === 'active') {
-                //session = await issueSessionQr(pgClient, req.params.id);
-            }
-
-            res.status(200).send(session);
-        } catch (err: any) {
-            if (err.message.startsWith('Invalid status')) {
-                res.status(400).send({ detail: err.message });
-            } else {
-                console.error('Error updating session status:', err.message);
-                res.status(500).send({ detail: err.message });
-            }
-        } finally {
-            pgClient.release();
-        }
-    });
-
     fastify.get(`${uri}/:id/qr`, {
         schema: {
             params: {

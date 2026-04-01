@@ -10,6 +10,7 @@ import statsController from './stats.js';
 import auditController from './audit.js';
 import exportController from './export.js';
 import enrollmentController from './enrollment.js';
+import adminController from './admin.js';
 
 async function controller(fastify: FastifyInstance) {
     fastify.get('/health', async (_req, res) => {
@@ -27,6 +28,7 @@ async function controller(fastify: FastifyInstance) {
         .register(sessionController)
         .register(enrollmentController)
         .register(checkinController)
+        .register(adminController)
         .register(statsController)
         .register(auditController)
         .register(exportController);

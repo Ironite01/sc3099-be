@@ -163,29 +163,29 @@
   - Requires: Instructor (session owner)
 
 ### Check-in Endpoints (7 remaining)
-- [ ] **GET /checkins/** - List check-ins (instructor/admin)
+- [x] **GET /checkins/** - List check-ins (instructor/admin)
   - Query params: session_id, course_id, student_id, status, min/max_risk_score, date range, limit, offset
 
-- [ ] **GET /checkins/my-checkins** - Student's check-in history
+- [x] **GET /checkins/my-checkins** - Student's check-in history
   - Query params: course_id, limit
   - Requires: Student role
 
-- [ ] **GET /checkins/session/{session_id}** - Check-ins for a session
+- [x] **GET /checkins/session/{session_id}** - Check-ins for a session
   - Requires: Instructor/TA role
 
-- [ ] **GET /checkins/flagged** - Flagged/appealed check-ins needing review
+- [x] **GET /checkins/flagged** - Flagged/appealed check-ins needing review
   - Query params: course_id, session_id, limit
   - Requires: Instructor/TA role
 
-- [ ] **GET /checkins/{checkin_id}** - Get specific check-in
+- [x] **GET /checkins/{checkin_id}** - Get specific check-in
   - Requires: Owner student or instructor/TA
 
-- [ ] **POST /checkins/{id}/appeal** - Student appeals flagged/rejected check-in
+- [x] **POST /checkins/{id}/appeal** - Student appeals flagged/rejected check-in
   - Request: appeal_reason
   - Constraints: 7-day appeal window, one appeal per check-in
   - Requires: Student (check-in owner)
 
-- [ ] **POST /checkins/{id}/review** - Instructor reviews flagged check-in
+- [x] **POST /checkins/{id}/review** - Instructor reviews flagged check-in
   - Request: status (approved/rejected), review_notes
   - Requires: Instructor/TA role
 

@@ -69,7 +69,7 @@ async function courseController(fastify: any) {
         }
     });
 
-    fastify.post(uri, {
+    fastify.post(`${uri}/`, {
         schema: {
             body: {
                 type: 'object',
