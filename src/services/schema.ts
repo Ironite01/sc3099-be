@@ -71,11 +71,24 @@ async function schemaBootstrap(fastify: FastifyInstance) {
                 require_liveness_check BOOLEAN,
                 require_face_match BOOLEAN,
                 risk_threshold DOUBLE PRECISION,
+                qr_code_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 qr_code_secret TEXT,
                 qr_code_expires_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
+        `);
+
+        await pgClient.query(`
+            ALTER TABLE sessions
+            ADD COLUMN IF NOT EXISTS qr_code_enabled BOOLEAN NOT NULL DEFAULT FALSE
+        `);
+
+        await pgClient.query(`
+            UPDATE sessions
+            SET qr_code_enabled = TRUE
+            WHERE qr_code_enabled = FALSE
+              AND (qr_code_secret IS NOT NULL OR qr_code_expires_at IS NOT NULL)
         `);
 
         await pgClient.query(`

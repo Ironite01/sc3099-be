@@ -92,10 +92,14 @@ export const CheckinModel = {
                 }
 
                 // 3. Validate QR code
-                const requireQr = Boolean(session.qr_code_secret);
+                const requireQr = Boolean(session.qr_code_enabled);
                 if (requireQr) {
                     if (!qr_code || typeof qr_code !== 'string') {
                         throw new BadRequestError('QR code is required for this session');
+                    }
+
+                    if (!session.qr_code_secret) {
+                        throw new BadRequestError('QR code is not available for this session');
                     }
 
                     const parsedQr = parseQrPayload(qr_code);

@@ -87,13 +87,20 @@ async function courseController(fastify: any) {
                     risk_threshold: { type: 'number', default: 0.5 },
                     instructor_id: { type: 'string' }
                 },
-                required: ['code', 'name', 'semester', 'instructor_id'],
+                required: ['code', 'name', 'semester'],
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const course = await CourseModel.create(pgClient, req.body as any);
+            const user = req.user as any;
+            const body = { ...(req.body as any) };
+
+            if (!body.instructor_id) {
+                body.instructor_id = user?.sub;
+            }
+
+            const course = await CourseModel.create(pgClient, body);
             res.status(201).send(course);
         } catch (err: any) {
             console.error('Error creating course:', err.message);

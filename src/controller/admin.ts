@@ -123,8 +123,8 @@ async function adminController(fastify: FastifyInstance) {
         schema: {
             params: {
                 type: 'object',
-                required: ['id'],
-                properties: { id: { type: 'string' } }
+                required: ['session_id'],
+                properties: { session_id: { type: 'string' } }
             },
             body: {
                 type: 'object',
@@ -137,13 +137,15 @@ async function adminController(fastify: FastifyInstance) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const session = await SessionModel.updateStatusById(pgClient, (req.params as any).id, (req.body as any).status);
+            const sessionId = (req.params as any).session_id;
+            const nextStatus = (req.body as any).status;
+            const session = await SessionModel.updateStatusById(pgClient, sessionId, nextStatus);
 
             res.status(200).send({
                 id: session!.id,
                 name: session!.name,
                 status: session!.status,
-                message: `Session status changed from '${session!.status}' to '${(req.body as any).status}'`
+                message: `Session status updated to '${nextStatus}'`
             });
         } finally {
             pgClient.release();
