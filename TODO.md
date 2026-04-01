@@ -243,12 +243,12 @@
   - Immutable: no updates/deletes, append-only pattern
 
 ### Data Export (2 total)
-- [ ] **GET /export/attendance/{course_id}** - Export course attendance
+- [x] **GET /export/attendance/{course_id}** - Export course attendance
   - Query params: format (csv/json), date range
   - CSV columns: student_id, student_name, student_email, session_date, session_name, status, checked_in_at, risk_score
   - Requires: Instructor for course
 
-- [ ] **GET /export/session/{session_id}** - Export session check-ins
+- [x] **GET /export/session/{session_id}** - Export session check-ins
   - Query params: format (csv/json)
   - Requires: Instructor for session
 

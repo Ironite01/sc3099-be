@@ -27,7 +27,7 @@ async function sessionController(fastify: any) {
         const pgClient = await fastify.pg.connect();
         try {
             const { limit = 50, offset = 0 } = (req.query) as any;
-            const { items, total } = await SessionModel.getAllFilteredSessions(pgClient, req.query);
+            const { items, total } = await SessionModel.getAllFilteredSessions(pgClient, req.query as any);
 
             res.status(200).send({ items, total, limit, offset });
         } finally {

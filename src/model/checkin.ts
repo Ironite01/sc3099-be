@@ -331,7 +331,7 @@ export const CheckinModel = {
             }
             if (status && status.length > 0) {
                 params.push(status);
-                where.push(`ci.status = ANY($${params.length}}::text[])`);
+                where.push(`ci.status = ANY($${params.length}::text[])`);
             }
             if (min_risk_score !== undefined) {
                 params.push(min_risk_score);
@@ -361,11 +361,16 @@ export const CheckinModel = {
                 params
             );
 
-            params.push(limit, offset);
+            if (Number.isFinite(limit)) {
+                params.push(limit);
+            }
+            params.push(offset);
+
             const { rows } = await pgClient.query(
                 `SELECT ci.id,
                         ci.session_id,
                         s.name AS session_name,
+                        TO_CHAR(s.actual_start AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS session_date,
                         ci.student_id,
                         u.full_name AS student_name,
                         u.email AS student_email,
@@ -374,16 +379,17 @@ export const CheckinModel = {
                         ci.distance_from_venue_meters,
                         ci.risk_score,
                         ci.risk_factors,
-                        ci.liveness_passed
+                        ci.liveness_passed,
                         ci.appealed_at,
-                        ci.appeal_reason
+                        ci.appeal_reason,
+                        c.code AS course_code
                  FROM checkins ci
                  JOIN sessions s ON s.id = ci.session_id
                  JOIN courses c ON c.id = s.course_id
                  JOIN users u ON u.id = ci.student_id
                  ${whereClause}
                  ORDER BY ci.checked_in_at DESC
-                 LIMIT $${params.length - 1}
+                 ${Number.isFinite(limit) ? `LIMIT $${params.length - 1}` : ''}
                  OFFSET $${params.length}`,
                 params
             );
@@ -394,7 +400,7 @@ export const CheckinModel = {
             }));
 
             return {
-                items: items as (Checkin & { session_name: string; student_name: string; student_email: string })[],
+                items: items as (Checkin & { course_code: string; session_date: Date | string; session_name: string; student_name: string; student_email: string })[],
                 total: countResult.rows[0]?.total ?? 0,
                 limit,
                 offset
