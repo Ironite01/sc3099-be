@@ -7,7 +7,7 @@ import { CourseModel } from '../model/course.js';
 async function courseController(fastify: any) {
     const uri = `${BASE_URL}/courses'`;
 
-    fastify.get(uri, {
+    fastify.get(`${uri}/`, {
         schema: {
             querystring: {
                 type: 'object',
