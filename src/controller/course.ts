@@ -107,8 +107,8 @@ async function courseController(fastify: any) {
         schema: {
             params: {
                 type: 'object',
-                required: ['id'],
-                properties: { id: { type: 'string' } }
+                required: ['course_id'],
+                properties: { course_id: { type: 'string' } }
             },
             body: {
                 type: 'object',
@@ -130,7 +130,7 @@ async function courseController(fastify: any) {
         const pgClient = await fastify.pg.connect();
         try {
             const user = req.user as any;
-            const course = await CourseModel.update(pgClient, (req.params as any).id, req.body as any, user);
+            const course = await CourseModel.update(pgClient, (req.params as any).course_id, req.body as any, user);
             res.status(200).send(course);
         } finally {
             pgClient.release();
@@ -141,14 +141,14 @@ async function courseController(fastify: any) {
         schema: {
             params: {
                 type: 'object',
-                required: ['id'],
-                properties: { id: { type: 'string' } }
+                required: ['course_id'],
+                properties: { course_id: { type: 'string' } }
             },
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            await CourseModel.delete(pgClient, (req.params as any).id);
+            await CourseModel.delete(pgClient, (req.params as any).course_id);
             res.status(204).send();
         } finally {
             pgClient.release();
