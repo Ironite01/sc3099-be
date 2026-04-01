@@ -40,6 +40,7 @@ export type Checkin = {
     liveness_challenge_type: LivenessChallengeType | null;
     risk_score: number | null;
     risk_factors: Record<string, any>[];
+    risk_signals?: RiskSignal[];
     appealed_at?: string | null;
     appeal_reason?: string | null;
     face_embedding_hash?: string | null;
@@ -47,10 +48,118 @@ export type Checkin = {
     face_match_passed?: boolean | null;
 };
 
+export type RiskSignal = {
+    id: string;
+    checkin_id: string;
+    signal_type: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    confidence: number;
+    details: Record<string, any> | null;
+    weight: number;
+    detected_at: Date;
+};
+
 function normalizeRiskFactors(value: any): any[] {
     if (Array.isArray(value)) return value;
     if (value && typeof value === 'object') return [value];
     return [];
+}
+
+function getSignalSeverity(weight: number): RiskSignal['severity'] {
+    const normalizedWeight = Math.abs(weight);
+    if (normalizedWeight >= 0.5) {
+        return 'critical';
+    }
+    if (normalizedWeight >= 0.3) {
+        return 'high';
+    }
+    if (normalizedWeight >= 0.1) {
+        return 'medium';
+    }
+    return 'low';
+}
+
+function buildRiskSignals(
+    signalBreakdown: Record<string, number>,
+    detectedAt: Date,
+    recommendations: string[]
+): Omit<RiskSignal, 'id' | 'checkin_id'>[] {
+    return Object.entries(signalBreakdown).map(([signalType, rawWeight]) => {
+        const weight = Number(rawWeight) || 0;
+        return {
+            signal_type: signalType,
+            severity: getSignalSeverity(weight),
+            confidence: 1,
+            details: recommendations.length ? { recommendations } : null,
+            weight,
+            detected_at: detectedAt
+        };
+    });
+}
+
+async function insertRiskSignals(
+    pgClient: PoolClient,
+    checkinId: string,
+    signals: Omit<RiskSignal, 'id' | 'checkin_id'>[]
+): Promise<RiskSignal[]> {
+    if (!signals.length) {
+        return [];
+    }
+
+    const values: any[] = [];
+    const placeholders = signals.map((signal, index) => {
+        const baseIndex = index * 7;
+        values.push(
+            checkinId,
+            signal.signal_type,
+            signal.severity,
+            signal.confidence,
+            signal.details ? JSON.stringify(signal.details) : null,
+            signal.weight,
+            signal.detected_at
+        );
+        return `(gen_random_uuid()::text, $${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}::jsonb, $${baseIndex + 6}, $${baseIndex + 7})`;
+    });
+
+    const { rows } = await pgClient.query(
+        `INSERT INTO risk_signals (
+            id,
+            checkin_id,
+            signal_type,
+            severity,
+            confidence,
+            details,
+            weight,
+            detected_at
+        ) VALUES ${placeholders.join(', ')}
+        RETURNING id, checkin_id, signal_type, severity, confidence, details, weight, detected_at`,
+        values
+    );
+
+    return rows as RiskSignal[];
+}
+
+async function getRiskSignalsByCheckinIds(pgClient: PoolClient, checkinIds: string[]): Promise<Map<string, RiskSignal[]>> {
+    const signalMap = new Map<string, RiskSignal[]>();
+    if (!checkinIds.length) {
+        return signalMap;
+    }
+
+    const { rows } = await pgClient.query(
+        `SELECT id, checkin_id, signal_type, severity, confidence, details, weight, detected_at
+         FROM risk_signals
+         WHERE checkin_id = ANY($1::text[])
+         ORDER BY detected_at ASC, id ASC`,
+        [checkinIds]
+    );
+
+    for (const row of rows as RiskSignal[]) {
+        const existing = signalMap.get(row.checkin_id) || [];
+        existing.push(row);
+        signalMap.set(row.checkin_id, existing);
+    }
+
+    return signalMap;
 }
 
 export const CheckinModel = {
@@ -195,7 +304,7 @@ export const CheckinModel = {
                 }
 
                 // 7. Risk assessment
-                const riskFactors: { type: string; weight: number }[] = [];
+                const riskFactors: { type: string; weight: number; severity: RiskSignal['severity']; confidence: number }[] = [];
                 const {
                     risk_score, pass_threshold, signal_breakdown, recommendations
                 } = await MlServices.risk.assess.post({
@@ -213,11 +322,15 @@ export const CheckinModel = {
                 });
                 const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
                 for (const [key, value] of Object.entries(signalBreakdown)) {
+                    const weight = Number(value) || 0;
                     riskFactors.push({
                         type: key,
-                        weight: Number(value)
+                        weight,
+                        severity: getSignalSeverity(weight),
+                        confidence: 1
                     });
                 }
+                const riskSignals = buildRiskSignals(signalBreakdown, now, recommendations || []);
 
                 if ((requireLiveness && !livenessPassed) || diffDist > geofenceRadius * 2) {
                     status = CHECKIN_STATUS.REJECTED;
@@ -267,9 +380,15 @@ export const CheckinModel = {
                     );
 
                     // 8. Update relevant records after check in
+                    const persistedRiskSignals = await insertRiskSignals(pgClient, rows[0].id as string, riskSignals);
+
                     await DeviceModel.updateAfterCheckin(pgClient, device.id, getRiskLevel(risk_score));
 
-                    return { ...rows[0], recommendations } as (Checkin & { recommendations?: string[] });
+                    return {
+                        ...rows[0],
+                        recommendations,
+                        risk_signals: persistedRiskSignals
+                    } as (Checkin & { recommendations?: string[] });
                 } catch (err: any) {
                     if (err.code === '23505') {
                         throw new BadRequestError('Student has already checked in for this session');
@@ -335,7 +454,7 @@ export const CheckinModel = {
             }
             if (status && status.length > 0) {
                 params.push(status);
-                where.push(`ci.status = ANY($${params.length}}::text[])`);
+                where.push(`ci.status = ANY($${params.length}::text[])`);
             }
             if (min_risk_score !== undefined) {
                 params.push(min_risk_score);
@@ -378,7 +497,7 @@ export const CheckinModel = {
                         ci.distance_from_venue_meters,
                         ci.risk_score,
                         ci.risk_factors,
-                        ci.liveness_passed
+                           ci.liveness_passed,
                         ci.appealed_at,
                         ci.appeal_reason
                  FROM checkins ci
@@ -392,9 +511,11 @@ export const CheckinModel = {
                 params
             );
 
+            const signalMap = await getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
             const items = rows.map((row) => ({
                 ...row,
-                risk_factors: normalizeRiskFactors(row.risk_factors)
+                risk_factors: normalizeRiskFactors(row.risk_factors),
+                risk_signals: signalMap.get(row.id as string) || []
             }));
 
             return {
@@ -496,7 +617,7 @@ export const CheckinModel = {
                 throw new NotFoundError();
             }
 
-            return rows[0] as (Checkin & {
+            const result = rows[0] as (Checkin & {
                 session_name: string;
                 course_id: string;
                 course_code: string;
@@ -504,6 +625,10 @@ export const CheckinModel = {
                 student_name: string;
                 student_email: string;
             });
+            const signalMap = await getRiskSignalsByCheckinIds(pgClient, [result.id]);
+            result.risk_factors = normalizeRiskFactors(result.risk_factors);
+            result.risk_signals = signalMap.get(result.id) || [];
+            return result;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
@@ -536,9 +661,11 @@ export const CheckinModel = {
                 user.role !== USER_ROLE_TYPES.ADMIN ? [sessionId, user.sub] : [sessionId]
             );
 
+            const signalMap = await getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
             return rows.map((row) => ({
                 ...row,
-                risk_factors: normalizeRiskFactors(row.risk_factors)
+                risk_factors: normalizeRiskFactors(row.risk_factors),
+                risk_signals: signalMap.get(row.id as string) || []
             }));
         } catch (err: any) {
             if (err instanceof AppError) throw err;
@@ -567,7 +694,7 @@ export const CheckinModel = {
 
             const { rows } = await pgClient.query(
                 `UPDATE checkins
-                 SET status = $4, appealed_reason = $3, appealed_at = NOW()
+                 SET status = $4, appeal_reason = $3, appealed_at = NOW()
                  WHERE id = $1 AND student_id = $2
                  RETURNING id, status, appeal_reason, appealed_at`,
                 [checkinId, studentId, appeal_reason, CHECKIN_STATUS.APPEALED]
@@ -586,7 +713,7 @@ export const CheckinModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    review: async (pgClient: PoolClient, id: string, { user, status, notes }: { user: { sub: string, role: USER_ROLE_TYPES }, status: CHECKIN_STATUS, notes: string }) => {
+    review: async (pgClient: PoolClient, id: string, { user, status, notes }: { user: { sub: string, role: USER_ROLE_TYPES }, status: CHECKIN_STATUS, notes?: string }) => {
         try {
             const currentCheckin = await CheckinModel.getByIdAndUser(pgClient, user, id);
             if (!currentCheckin) {
@@ -600,7 +727,7 @@ export const CheckinModel = {
                 `UPDATE checkins
                  SET status = $2, reviewed_by_id = $3, reviewed_at = NOW(), review_notes = $4
                  WHERE id = $1`,
-                [id, status, user.sub, notes]
+                [id, status, user.sub, notes ?? null]
             );
 
             return {
@@ -608,7 +735,7 @@ export const CheckinModel = {
                 status,
                 reviewed_by_id: user.sub,
                 reviewed_at: new Date().toISOString(),
-                review_notes: notes
+                review_notes: notes ?? null
             }
         } catch (err: any) {
             if (err instanceof AppError) throw err;

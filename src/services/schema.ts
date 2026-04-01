@@ -122,6 +122,19 @@ async function schemaBootstrap(fastify: FastifyInstance) {
         `);
 
         await pgClient.query(`
+            CREATE TABLE IF NOT EXISTS risk_signals (
+                id TEXT PRIMARY KEY,
+                checkin_id TEXT NOT NULL REFERENCES checkins(id) ON DELETE CASCADE,
+                signal_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'low',
+                confidence DOUBLE PRECISION NOT NULL DEFAULT 1,
+                details JSONB,
+                weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+                detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
+
+        await pgClient.query(`
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id TEXT PRIMARY KEY,
                 user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -146,7 +159,52 @@ async function schemaBootstrap(fastify: FastifyInstance) {
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_session_id ON checkins(session_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_student_id ON checkins(student_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_checked_in_at ON checkins(checked_in_at)`);
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_risk_signals_checkin_id ON risk_signals(checkin_id)`);
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_risk_signals_signal_type ON risk_signals(signal_type)`);
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_risk_signals_severity ON risk_signals(severity)`);
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_risk_signals_detected_at ON risk_signals(detected_at)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)`);
+
+        await pgClient.query(`
+            INSERT INTO risk_signals (
+                id,
+                checkin_id,
+                signal_type,
+                severity,
+                confidence,
+                details,
+                weight,
+                detected_at
+            )
+            SELECT
+                gen_random_uuid()::text,
+                c.id,
+                COALESCE(NULLIF(elem->>'type', ''), 'unknown'),
+                COALESCE(
+                    NULLIF(elem->>'severity', ''),
+                    CASE
+                        WHEN ABS(COALESCE((elem->>'weight')::double precision, 0)) >= 0.5 THEN 'critical'
+                        WHEN ABS(COALESCE((elem->>'weight')::double precision, 0)) >= 0.3 THEN 'high'
+                        WHEN ABS(COALESCE((elem->>'weight')::double precision, 0)) >= 0.1 THEN 'medium'
+                        ELSE 'low'
+                    END
+                ),
+                COALESCE((elem->>'confidence')::double precision, 1),
+                CASE
+                    WHEN jsonb_typeof(elem) = 'object' THEN elem - 'type' - 'severity' - 'confidence' - 'weight'
+                    ELSE NULL
+                END,
+                COALESCE((elem->>'weight')::double precision, 0),
+                c.checked_in_at
+            FROM checkins c
+            CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.risk_factors, '[]'::jsonb)) elem
+            WHERE jsonb_array_length(COALESCE(c.risk_factors, '[]'::jsonb)) > 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM risk_signals rs
+                  WHERE rs.checkin_id = c.id
+              )
+        `);
 
         // Seed a default admin for local/dev convenience if missing.
         const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@example.com';
