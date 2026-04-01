@@ -104,6 +104,26 @@ async function schemaBootstrap(fastify: FastifyInstance) {
         `);
 
         await pgClient.query(`
+            CREATE TABLE IF NOT EXISTS course_tas (
+                course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                ta_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (course_id, ta_id)
+            )
+        `);
+
+        await pgClient.query(`
+            INSERT INTO course_tas (course_id, ta_id)
+            SELECT DISTINCT s.course_id, s.instructor_id
+            FROM sessions s
+            JOIN users u ON u.id = s.instructor_id
+            WHERE u.role = $1
+              AND s.course_id IS NOT NULL
+              AND s.instructor_id IS NOT NULL
+            ON CONFLICT (course_id, ta_id) DO NOTHING
+        `, [USER_ROLE_TYPES.TA]);
+
+        await pgClient.query(`
             CREATE TABLE IF NOT EXISTS checkins (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -143,6 +163,7 @@ async function schemaBootstrap(fastify: FastifyInstance) {
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_sessions_status_checkin_close ON sessions(status, checkin_closes_at)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_enrollments_student_id ON enrollments(student_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_enrollments_course_active ON enrollments(course_id, is_active)`);
+        await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_course_tas_ta_id ON course_tas(ta_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_session_id ON checkins(session_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_student_id ON checkins(student_id)`);
         await pgClient.query(`CREATE INDEX IF NOT EXISTS idx_checkins_checked_in_at ON checkins(checked_in_at)`);
