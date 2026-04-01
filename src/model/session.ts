@@ -504,19 +504,42 @@ export const SessionModel = {
         }
     },
     delete: async function (pgClient: any, user: { sub: string, role: USER_ROLE_TYPES }, id: string) {
-        const userId = user?.sub as string;
-        const role = user?.role as USER_ROLE_TYPES;
+        try {
+            const userId = user?.sub as string;
+            const role = user?.role as USER_ROLE_TYPES;
 
-        let sessionRes;
-        if (role === USER_ROLE_TYPES.INSTRUCTOR || role === USER_ROLE_TYPES.TA) {
-            sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND instructor_id = $2 AND status = $3', [id, userId, SESSION_STATUS.SCHEDULED]);
-        } else {
-            sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND status = $2', [id, SESSION_STATUS.SCHEDULED]);
+            let sessionRes;
+            if (role === USER_ROLE_TYPES.INSTRUCTOR || role === USER_ROLE_TYPES.TA) {
+                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND instructor_id = $2 AND status = $3', [id, userId, SESSION_STATUS.SCHEDULED]);
+            } else {
+                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND status = $2', [id, SESSION_STATUS.SCHEDULED]);
+            }
+            const { rows } = sessionRes;
+
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
-        const { rows } = sessionRes;
+    },
+    updateStatusById: async function (pgClient: any, id: string, status: SESSION_STATUS): Promise<Session | null> {
+        try {
+            // Admin can update status regardless of transition states
+            const { rows } = await pgClient.query(
+                `UPDATE sessions SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+                [status, id]
+            );
 
-        if (rows.length === 0) {
-            throw new NotFoundError();
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+
+            return rows[0] as Session;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
     },
     // TODO: Everything below needs to be refactored and tested accordingly
@@ -532,13 +555,5 @@ export const SessionModel = {
             [SESSION_STATUS.CLOSED, SESSION_STATUS.ACTIVE]
         );
         return result.rowCount ?? 0;
-    },
-    updateStatus: async function (pgClient: any, id: string, status: SESSION_STATUS): Promise<Session | null> {
-        const result = await pgClient.query(
-            `UPDATE sessions SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-            [status, id]
-        );
-
-        return result.rows.length > 0 ? result.rows[0] as Session : null;
     }
 }

@@ -179,12 +179,20 @@ export const UserModel = {
                 return [];
             }
 
-            const hashedUsers = users.map(user => ({
-                email: user.email,
-                full_name: user.full_name,
-                hashed_password: bcrypt.hashSync(generateRandomPassword(), bcrypt.genSaltSync(SALT_ROUNDS)),
-                role: user.role!.toLowerCase()
-            }));
+            const hashedUsers = users.map(user => {
+                let hashed_password: string;
+                if ((user as any).password) {
+                    hashed_password = (user as any).password;
+                } else {
+                    hashed_password = bcrypt.hashSync(generateRandomPassword(), bcrypt.genSaltSync(SALT_ROUNDS));
+                }
+                return {
+                    email: user.email,
+                    full_name: user.full_name,
+                    hashed_password,
+                    role: user.role!.toLowerCase()
+                }
+            });
 
             // Build the multi-value INSERT query
             const values: any[] = [];
@@ -335,44 +343,99 @@ export const UserModel = {
         }
     },
     faceEnroll: async function faceEnroll(pgClient: PoolClient, userId: string, image: string) {
-        if (!userId) {
-            throw new NotFoundError();
-        }
-
-        const user = await UserModel.getById(pgClient, userId);
-        if (!user.camera_consent) {
-            throw new BadRequestError('Camera consent required before face enrollment');
-        }
-
-        if (!isBase64(image)) {
-            throw new BadRequestError('Invalid image data');
-        }
-
-        let mlFaceEnrollResponse;
         try {
-            mlFaceEnrollResponse = await MlServices.face.enroll.post({
-                user_id: userId,
-                image,
-                camera_consent: user.camera_consent
-            });
-        } catch (err) {
-            console.error('Something went wrong in the ML service...', err);
-            throw new UnavailableError();
-        }
+            if (!userId) {
+                throw new NotFoundError();
+            }
 
-        const rows = await pgClient.query(
-            'UPDATE users SET face_enrolled = TRUE, face_embedding_hash = $2 WHERE id = $1',
-            [userId, mlFaceEnrollResponse.face_template_hash]
-        );
-        if (rows.rowCount === 0) {
-            throw new NotFoundError();
-        }
+            const user = await UserModel.getById(pgClient, userId);
+            if (!user.camera_consent) {
+                throw new BadRequestError('Camera consent required before face enrollment');
+            }
 
-        return {
-            success: true,
-            message: 'Face enrolled successfully',
-            face_enrolled: true,
-            quality_score: mlFaceEnrollResponse.quality_score
+            if (!isBase64(image)) {
+                throw new BadRequestError('Invalid image data');
+            }
+
+            let mlFaceEnrollResponse;
+            try {
+                mlFaceEnrollResponse = await MlServices.face.enroll.post({
+                    user_id: userId,
+                    image,
+                    camera_consent: user.camera_consent
+                });
+            } catch (err) {
+                console.error('Something went wrong in the ML service...', err);
+                throw new UnavailableError();
+            }
+
+            const rows = await pgClient.query(
+                'UPDATE users SET face_enrolled = TRUE, face_embedding_hash = $2 WHERE id = $1',
+                [userId, mlFaceEnrollResponse.face_template_hash]
+            );
+            if (rows.rowCount === 0) {
+                throw new NotFoundError();
+            }
+
+            return {
+                success: true,
+                message: 'Face enrolled successfully',
+                face_enrolled: true,
+                quality_score: mlFaceEnrollResponse.quality_score
+            }
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    deactivateById: async (pgClient: PoolClient, userId: string) => {
+        try {
+            const { rows } = await pgClient.query(
+                `UPDATE users
+                 SET is_active = FALSE, updated_at = NOW(), scheduled_deletion_at = NOW()
+                 WHERE id = $1
+                 RETURNING id, email`,
+                [userId]
+            );
+
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+
+            const user = rows[0] as Partial<User>;
+            return {
+                id: user.id,
+                email: user.email,
+                is_active: false
+            }
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    activateById: async (pgClient: PoolClient, userId: string) => {
+        try {
+            const { rows } = await pgClient.query(
+                `UPDATE users
+                 SET is_active = TRUE, updated_at = NOW(), scheduled_deletion_at = NULL
+                 WHERE id = $1
+                 RETURNING id, email`,
+                [userId]
+            );
+
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+
+            const user = rows[0] as Partial<User>;
+            return {
+                id: user.id,
+                email: user.email,
+                is_active: true
+            }
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
     }
 }

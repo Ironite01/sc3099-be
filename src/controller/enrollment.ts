@@ -46,7 +46,7 @@ function enrollmentController(fastify: FastifyInstance) {
                     }
                 }
             },
-            preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
+            preHandler: [fastify.authorize(2), fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
             const pgClient = await fastify.pg.connect();
@@ -86,7 +86,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 required: ["student_id", "course_id"]
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -124,7 +124,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { course_id, student_emails, create_accounts = false } = req.body as any;
         const results = await EnrollmentModel.bulkCreate(fastify.pg.transact, course_id, student_emails, create_accounts);
@@ -137,7 +137,7 @@ function enrollmentController(fastify: FastifyInstance) {
         });
     });
 
-    fastify.delete(`${BASE_URL}/enrollments/:enrollment_id`, {
+    fastify.delete(`${uri}/:enrollment_id`, {
         schema: {
             params: {
                 type: 'object',
@@ -155,79 +155,6 @@ function enrollmentController(fastify: FastifyInstance) {
             await EnrollmentModel.delete(pgClient, enrollmentId);
 
             res.status(204).send();
-        } finally {
-            pgClient.release();
-        }
-    });
-    // POST /api/v1/admin/enrollments/  
-    fastify.post(`${BASE_URL}/admin/enrollments/`, {
-        schema: {
-            body: {
-                type: 'object',
-                required: ['student_id', 'course_id'],
-                properties: {
-                    student_id: { type: 'string' },
-                    course_id: { type: 'string' }
-                }
-            }
-        },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const { student_id, course_id } = req.body as { student_id: string; course_id: string };
-        const pgClient = await fastify.pg.connect();
-        try {
-            const userCheck = await pgClient.query(
-                'SELECT id, role, is_active FROM users WHERE id = $1',
-                [student_id]
-            );
-            if (!userCheck.rows.length) {
-                return res.status(404).send({ detail: 'Student not found' });
-            }
-            if (userCheck.rows[0].role !== USER_ROLE_TYPES.STUDENT) {
-                return res.status(400).send({ detail: 'User is not a student' });
-            }
-            if (!userCheck.rows[0].is_active) {
-                return res.status(400).send({ detail: 'Student account is inactive' });
-            }
-
-            const courseCheck = await pgClient.query(
-                'SELECT id, is_active FROM courses WHERE id = $1',
-                [course_id]
-            );
-            if (!courseCheck.rows.length) {
-                return res.status(404).send({ detail: 'Course not found' });
-            }
-            if (!courseCheck.rows[0].is_active) {
-                return res.status(400).send({ detail: 'Course is inactive' });
-            }
-
-            const existing = await pgClient.query(
-                'SELECT id, is_active FROM enrollments WHERE student_id = $1 AND course_id = $2',
-                [student_id, course_id]
-            );
-
-            if (existing.rows.length && existing.rows[0].is_active) {
-                return res.status(200).send({
-                    message: 'Student already enrolled',
-                    enrollment_id: existing.rows[0].id,
-                    student_id,
-                    course_id
-                });
-            }
-
-            const upsert = await pgClient.query(
-                `INSERT INTO enrollments (id, student_id, course_id, is_active, enrolled_at)
-                 VALUES (gen_random_uuid()::text, $1, $2, TRUE, NOW())
-                 ON CONFLICT (student_id, course_id)
-                 DO UPDATE SET is_active = TRUE, dropped_at = NULL
-                 RETURNING id, student_id, course_id, is_active, enrolled_at`,
-                [student_id, course_id]
-            );
-
-            res.status(201).send({
-                message: 'Student enrolled successfully',
-                enrollment: upsert.rows[0]
-            });
         } finally {
             pgClient.release();
         }
