@@ -5,6 +5,7 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
+import user from './user.js';
 
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
@@ -55,15 +56,24 @@ async function checkinController(fastify: FastifyInstance) {
             const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
 
             let auditAction = AUDIT_ACTIONS.CHECKIN_ATTEMPTED;
+            let details;
             switch (checkin.status) {
                 case CHECKIN_STATUS.APPROVED:
                     auditAction = AUDIT_ACTIONS.CHECKIN_APPROVED;
+                    details = { checkin_id: checkin.id, reviewer_id: null };
                     break;
                 case CHECKIN_STATUS.FLAGGED:
                     auditAction = AUDIT_ACTIONS.CHECKIN_FLAGGED;
+                    details = {
+                        session_id: checkin.session_id,
+                        risk_score: checkin.risk_score,
+                        liveness_passed: checkin.liveness_passed,
+                        distance_meters: checkin.distance_from_venue_meters
+                    };
                     break;
                 case CHECKIN_STATUS.REJECTED:
                     auditAction = AUDIT_ACTIONS.CHECKIN_REJECTED;
+                    details = { checkin_id: checkin.id, reason: 'Failed risk checks' };
                     break;
             }
 
@@ -109,12 +119,9 @@ async function checkinController(fastify: FastifyInstance) {
                 userAgent: userAgent || '',
                 success: true,
                 details: {
-                    qr_code,
-                    liveness_challenge_response,
-                    device_fingerprint,
-                    latitude,
-                    longitude,
-                    location_accuracy_meters
+                    student_id: userId,
+                    session_id,
+                    location: { latitude, longitude, accuracy_meters: location_accuracy_meters }
                 }
             });
             throw err;
@@ -376,6 +383,19 @@ async function checkinController(fastify: FastifyInstance) {
                     ? AUDIT_ACTIONS.CHECKIN_REJECTED
                     : AUDIT_ACTIONS.CHECKIN_REVIEWED;
 
+            let details;
+            if (result.status === CHECKIN_STATUS.APPROVED) {
+                details = { checkin_id: result.id, reviewer_id: result.reviewed_by_id };
+            } else if (result.status === CHECKIN_STATUS.REJECTED) {
+                details = { checkin_id: result.id, reason: result.review_notes };
+            } else {
+                details = {
+                    new_status: result.status,
+                    reviewed_at: result.reviewed_at,
+                    review_notes: result.review_notes
+                }
+            }
+
             await AuditModel.log(pgClient, {
                 userId: (req.user as any)?.sub,
                 action: auditAction,
@@ -384,11 +404,7 @@ async function checkinController(fastify: FastifyInstance) {
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent'] || '',
                 success: true,
-                details: {
-                    new_status: result.status,
-                    reviewed_at: result.reviewed_at,
-                    review_notes: result.review_notes
-                }
+                details
             });
 
             res.status(200).send({

@@ -114,7 +114,7 @@ async function authController(fastify: FastifyInstance) {
                     ipAddress: req.ip,
                     userAgent: req.headers['user-agent'] || '',
                     success: true,
-                    details: { email: user.email }
+                    details: { user_id: user.id, ip: req.ip }
                 });
             } catch (err) {
                 loginTotal.inc({ status: 'failure' });
@@ -127,7 +127,7 @@ async function authController(fastify: FastifyInstance) {
                     ipAddress: req.ip,
                     userAgent: req.headers['user-agent'] || '',
                     success: false,
-                    details: { reason: 'invalid_credentials' }
+                    details: { email: email, ip: req.ip, reason: 'invalid_credentials' }
                 });
                 throw err;
             }

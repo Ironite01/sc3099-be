@@ -20,7 +20,9 @@ export enum AUDIT_ACTIONS {
     ENROLLMENT_ADDED = 'enrollment_added',
     ENROLLMENT_REMOVED = 'enrollment_removed',
     DEVICE_REGISTERED = 'device_registered',
-    FACE_ENROLLED = 'face_enrolled'
+    FACE_ENROLLED = 'face_enrolled',
+    SECURITY_VIOLATION = 'security_violation',
+    DATA_EXPORTED = 'data_exported'
 }
 
 export const AuditModel = {

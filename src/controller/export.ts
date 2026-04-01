@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { CheckinModel } from '../model/checkin.js';
+import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 
 function toCsv(rows: Record<string, unknown>[]): string {
     if (!rows.length) return '';
@@ -20,6 +21,7 @@ function toCsv(rows: Record<string, unknown>[]): string {
 
 async function exportController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/export`;
+    const resourceType = 'export';
 
     fastify.get(`${uri}/attendance/:courseId`, {
         schema: {
@@ -87,6 +89,18 @@ async function exportController(fastify: FastifyInstance) {
             const csv = toCsv(rows as Record<string, unknown>[]);
             res.header('Content-Type', 'text/csv');
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.csv"`);
+
+            await AuditModel.log(pgClient, {
+                userId: (req.user as any)?.sub,
+                action: AUDIT_ACTIONS.DATA_EXPORTED,
+                resourceType,
+                resourceId: courseId,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { user_id: (req.user as any)?.sub, export_type: format }
+            });
+
             return res.status(200).send(csv);
         } finally {
             pgClient.release();
@@ -153,6 +167,17 @@ async function exportController(fastify: FastifyInstance) {
             const csv = toCsv(rows as Record<string, unknown>[]);
             res.header('Content-Type', 'text/csv');
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.csv"`);
+
+            await AuditModel.log(pgClient, {
+                userId: (req.user as any)?.sub,
+                action: AUDIT_ACTIONS.DATA_EXPORTED,
+                resourceType,
+                resourceId: sessionId,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { user_id: (req.user as any)?.sub, export_type: format }
+            });
             return res.status(200).send(csv);
         } finally {
             pgClient.release();
