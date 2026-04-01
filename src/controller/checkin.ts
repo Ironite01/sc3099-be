@@ -3,8 +3,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from '../model/error.js';
-import { CheckinModel } from '../model/checkin.js';
+import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
+import { STATUS_CODES } from 'node:http';
 
 function normalizeRiskFactors(value: any): any[] {
     if (Array.isArray(value)) return value;
@@ -82,7 +83,7 @@ async function checkinController(fastify: FastifyInstance) {
         });
     });
 
-    fastify.get(`${uri}/`, {
+    fastify.get(uri, {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
         schema: {
             querystring: {
@@ -93,7 +94,7 @@ async function checkinController(fastify: FastifyInstance) {
                     student_id: { type: 'string' },
                     status: {
                         type: 'string',
-                        enum: ['pending', 'approved', 'flagged', 'rejected', 'appealed']
+                        enum: Object.values(CHECKIN_STATUS)
                     },
                     min_risk_score: { type: 'number' },
                     max_risk_score: { type: 'number' },
@@ -105,97 +106,19 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const {
-            session_id,
-            course_id,
-            student_id,
-            status,
-            min_risk_score,
-            max_risk_score,
-            start_date,
-            end_date,
-            limit = 50,
-            offset = 0
-        } = req.query as any;
-
         const pgClient = await fastify.pg.connect();
         try {
-            const params: any[] = [];
-            const where: string[] = [];
-
-            if (session_id) {
-                params.push(session_id);
-                where.push(`ci.session_id = $${params.length}`);
-            }
-            if (course_id) {
-                params.push(course_id);
-                where.push(`s.course_id = $${params.length}`);
-            }
-            if (student_id) {
-                params.push(student_id);
-                where.push(`ci.student_id = $${params.length}`);
-            }
-            if (status) {
-                params.push(status);
-                where.push(`ci.status = $${params.length}`);
-            }
-            if (min_risk_score !== undefined) {
-                params.push(min_risk_score);
-                where.push(`ci.risk_score >= $${params.length}`);
-            }
-            if (max_risk_score !== undefined) {
-                params.push(max_risk_score);
-                where.push(`ci.risk_score <= $${params.length}`);
-            }
-            if (start_date) {
-                params.push(start_date);
-                where.push(`ci.checked_in_at >= $${params.length}`);
-            }
-            if (end_date) {
-                params.push(end_date);
-                where.push(`ci.checked_in_at <= $${params.length}`);
-            }
-
-            const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-            const countResult = await pgClient.query(
-                `SELECT COUNT(*)::int AS total
-                 FROM checkins ci
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 ${whereClause}`,
-                params
-            );
-
-            params.push(limit, offset);
-            const itemsResult = await pgClient.query(
-                `SELECT ci.id,
-                        ci.session_id,
-                        s.name AS session_name,
-                        ci.student_id,
-                        u.full_name AS student_name,
-                        u.email AS student_email,
-                        ci.status,
-                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
-                        ci.distance_from_venue_meters,
-                        ci.risk_score,
-                        ci.liveness_passed
-                 FROM checkins ci
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 JOIN users u ON u.id = ci.student_id
-                 ${whereClause}
-                 ORDER BY ci.checked_in_at DESC
-                 LIMIT $${params.length - 1}
-                 OFFSET $${params.length}`,
-                params
-            );
+            const status = (req.query as any).status as CHECKIN_STATUS | undefined;
+            const checkins = await CheckinModel.getFilteredCheckins(pgClient, req.user as any, {
+                ...req.query as any,
+                status: status ? [status] : []
+            });
 
             res.status(200).send({
-                items: itemsResult.rows,
-                total: countResult.rows[0]?.total ?? 0,
-                limit,
-                offset
+                items: checkins.items,
+                total: checkins.total,
+                limit: checkins.limit,
+                offset: checkins.offset
             });
         } finally {
             pgClient.release();
@@ -214,26 +137,63 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const studentId = (req.user as any)?.sub;
-        if (!studentId) {
-            throw new UnauthorizedError();
-        }
-
-        const { course_id, limit = 50 } = req.query as { course_id?: string; limit?: number };
         const pgClient = await fastify.pg.connect();
         try {
-            const filters = {
-                ...(course_id ? { course_id } : {}),
-                limit
-            };
-            const checkins = await CheckinModel.listByStudent(pgClient, studentId, filters);
-            res.status(200).send(checkins);
+            const studentId = (req.user as any)?.sub;
+            const checkins = await CheckinModel.getFilteredCheckinsByStudentId(pgClient, studentId, req.query as any);
+
+            res.status(200).send(checkins.map((c) => ({
+                session_id: c.session_id,
+                session_name: c.session_name,
+                course_id: c.course_id,
+                course_code: c.course_code,
+                course_name: c.course_name,
+                status: c.status,
+                checked_in_at: c.checked_in_at,
+                risk_score: c.risk_score
+            })));
         } finally {
             pgClient.release();
         }
     });
 
-    // GET /api/v1/checkins/flagged - instructor/admin: list flagged checkins pending review
+    fastify.get(`${uri}/session/:sessionId`, {
+        schema: {
+            params: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                    sessionId: { type: 'string' }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { sessionId } = req.params as { sessionId: string };
+            const checkins = await CheckinModel.getBySessionIdAndUser(pgClient, req.user as any, sessionId);
+
+            res.status(200).send(checkins.map((c) => ([
+                {
+                    "id": c.id,
+                    "student_id": c.student_id,
+                    "student_name": c.student_name,
+                    "student_email": c.student_email,
+                    "status": c.status,
+                    "checked_in_at": c.checked_in_at,
+                    "distance_from_venue_meters": c.distance_from_venue_meters,
+                    "risk_score": c.risk_score,
+                    "risk_factors": c.risk_factors,
+                    "liveness_passed": c.liveness_passed,
+                    "device_trusted": c.device_is_trusted
+                }
+            ])));
+        } finally {
+            pgClient.release();
+        }
+    });
+
     fastify.get(`${uri}/flagged`, {
         schema: {
             querystring: {
@@ -248,109 +208,41 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const {
-            course_id,
-            session_id,
-            limit = 20,
-            offset = 0
-        } = req.query as { course_id?: string; session_id?: string; limit?: number; offset?: number };
         const pgClient = await fastify.pg.connect();
         try {
-            const params: any[] = [];
-            const where: string[] = [`ci.status IN ('flagged','appealed')`];
-
-            if (course_id) {
-                params.push(course_id);
-                where.push(`c.id = $${params.length}`);
-            }
-            if (session_id) {
-                params.push(session_id);
-                where.push(`s.id = $${params.length}`);
-            }
-
-            const whereClause = `WHERE ${where.join(' AND ')}`;
-
-            const countResult = await pgClient.query(
-                `SELECT COUNT(*)::int AS total
-                 FROM checkins ci
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 ${whereClause}`,
-                params
-            );
-
-            params.push(limit, offset);
-            const result = await pgClient.query(
-                `SELECT ci.id, ci.student_id, u.full_name AS student_name, u.email AS student_email,
-                        ci.session_id, s.name AS session_name, c.code AS course_code,
-                        ci.status, ci.risk_score, ci.risk_factors,
-                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
-                        ci.distance_from_venue_meters, ci.liveness_passed
-                 FROM checkins ci
-                 JOIN users u ON u.id = ci.student_id
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 ${whereClause}
-                 ORDER BY ci.checked_in_at DESC
-                 LIMIT $${params.length - 1}
-                 OFFSET $${params.length}`,
-                params
-            );
+            const result = await CheckinModel.getFilteredCheckins(pgClient, req.user as any, {
+                ...req.query as any,
+                status: [STATUS_CODES.FLAGGED, STATUS_CODES.APPEALED]
+            })
             res.status(200).send({
-                items: result.rows,
-                total: countResult.rows[0]?.total ?? 0,
-                limit,
-                offset
+                items: result.items,
+                total: result.total,
+                limit: result.limit,
+                offset: result.offset
             });
         } finally {
             pgClient.release();
         }
     });
 
-    fastify.get(`${uri}/:id`, {
-        preHandler: [fastify.authorize(1), fastify.rateLimit()],
+    fastify.get(`${uri}/:checkin_id`, {
+        preHandler: [fastify.authorize(), fastify.rateLimit()],
         schema: {
             params: {
                 type: 'object',
-                required: ['id'],
+                required: ['checkin_id'],
                 properties: {
-                    id: { type: 'string' }
+                    checkin_id: { type: 'string' }
                 }
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const { id } = req.params as { id: string };
-        const user = req.user as any;
-        const userId = user?.sub as string;
-        const role = user?.role as USER_ROLE_TYPES;
-
         const pgClient = await fastify.pg.connect();
         try {
-            const result = await pgClient.query(
-                `SELECT ci.id, ci.session_id, ci.student_id, ci.status,
-                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
-                        ci.latitude, ci.longitude, ci.distance_from_venue_meters,
-                        ci.liveness_passed, ci.liveness_score, ci.risk_score, ci.risk_factors,
-                        s.course_id, s.name AS session_name,
-                        c.code AS course_code, c.name AS course_name,
-                        u.full_name AS student_name, u.email AS student_email
-                 FROM checkins ci
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 JOIN users u ON u.id = ci.student_id
-                 WHERE ci.id = $1`,
-                [id]
-            );
-            if (!result.rows.length) {
-                throw new NotFoundError();
-            }
+            const { checkin_id } = req.params as any;
+            const user = req.user as any;
 
-            const checkin = result.rows[0];
-            const isOwner = checkin.student_id === userId;
-            const privileged = role === USER_ROLE_TYPES.ADMIN || role === USER_ROLE_TYPES.INSTRUCTOR || role === USER_ROLE_TYPES.TA;
-            if (!isOwner && !privileged) {
-                throw new ForbiddenError();
-            }
+            const checkin = await CheckinModel.getByIdAndUser(pgClient, user, checkin_id);
 
             res.status(200).send(checkin);
         } finally {
@@ -377,186 +269,26 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const { id } = req.params as { id: string };
-        const { appeal_reason } = req.body as { appeal_reason: string };
-        const studentId = (req.user as any)?.sub;
-
         const pgClient = await fastify.pg.connect();
         try {
-            const result = await pgClient.query(
-                `SELECT id, student_id, status, checked_in_at, risk_factors
-                 FROM checkins WHERE id = $1`,
-                [id]
-            );
-            if (!result.rows.length) {
-                throw new NotFoundError();
-            }
+            const { id } = req.params as { id: string };
+            const { appeal_reason } = req.body as { appeal_reason: string };
+            const studentId = (req.user as any)?.sub;
 
-            const checkin = result.rows[0];
-            if (checkin.student_id !== studentId) {
-                throw new ForbiddenError();
-            }
-            if (!['rejected', 'flagged'].includes(checkin.status)) {
-                throw new BadRequestError('Only rejected or flagged check-ins can be appealed');
-            }
-
-            const checkedInAt = new Date(checkin.checked_in_at).getTime();
-            const windowMs = 7 * 24 * 60 * 60 * 1000;
-            if (Date.now() - checkedInAt > windowMs) {
-                throw new BadRequestError('Appeal window has expired');
-            }
-
-            const currentMeta = extractMetadata(normalizeRiskFactors(checkin.risk_factors));
-            if (currentMeta.appealed_at) {
-                throw new BadRequestError('Check-in has already been appealed');
-            }
-
-            const metadataPatch = {
-                ...currentMeta,
-                appeal_reason,
-                appealed_at: new Date().toISOString(),
-                review_notes: currentMeta.review_notes,
-                reviewed_by_id: currentMeta.reviewed_by_id,
-                reviewed_at: currentMeta.reviewed_at
-            };
-
-            const updatedRiskFactors = mergeMetadata(normalizeRiskFactors(checkin.risk_factors), metadataPatch);
-            const updated = await pgClient.query(
-                `UPDATE checkins
-                 SET status = 'appealed',
-                     risk_factors = $2::jsonb
-                 WHERE id = $1
-                 RETURNING id, status`,
-                [id, JSON.stringify(updatedRiskFactors)]
-            );
+            const result = await CheckinModel.appeal(pgClient, studentId, id, appeal_reason);
 
             res.status(200).send({
-                id,
-                status: updated.rows[0]?.status ?? 'appealed',
-                appeal_reason,
-                appealed_at: metadataPatch.appealed_at
+                id: result.id,
+                status: result.status,
+                appeal_reason: result.appeal_reason,
+                appealed_at: result.appealed_at
             });
         } finally {
             pgClient.release();
         }
     });
 
-    fastify.post(`${uri}/:id/review`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()],
-        schema: {
-            params: {
-                type: 'object',
-                required: ['id'],
-                properties: {
-                    id: { type: 'string' }
-                }
-            },
-            body: {
-                type: 'object',
-                required: ['status'],
-                properties: {
-                    status: { type: 'string', enum: ['approved', 'rejected'] },
-                    review_notes: { type: 'string', maxLength: 2000 }
-                }
-            }
-        }
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const { id } = req.params as { id: string };
-        const { status, review_notes } = req.body as { status: 'approved' | 'rejected'; review_notes?: string };
-        const reviewerId = (req.user as any)?.sub;
 
-        const pgClient = await fastify.pg.connect();
-        try {
-            const result = await pgClient.query(
-                `SELECT id, status, risk_factors
-                 FROM checkins
-                 WHERE id = $1`,
-                [id]
-            );
-            if (!result.rows.length) {
-                throw new NotFoundError();
-            }
-
-            const checkin = result.rows[0];
-            if (!['flagged', 'appealed'].includes(checkin.status)) {
-                throw new BadRequestError('Only flagged or appealed check-ins can be reviewed');
-            }
-
-            const currentMeta = extractMetadata(normalizeRiskFactors(checkin.risk_factors));
-            const metadataPatch = {
-                ...currentMeta,
-                review_notes: review_notes ?? currentMeta.review_notes ?? null,
-                reviewed_by_id: reviewerId,
-                reviewed_at: new Date().toISOString()
-            };
-
-            const updatedRiskFactors = mergeMetadata(normalizeRiskFactors(checkin.risk_factors), metadataPatch);
-
-            await pgClient.query(
-                `UPDATE checkins
-                 SET status = $2,
-                     risk_factors = $3::jsonb
-                 WHERE id = $1`,
-                [id, status, JSON.stringify(updatedRiskFactors)]
-            );
-
-            res.status(200).send({
-                id,
-                status,
-                reviewed_by_id: reviewerId,
-                reviewed_at: metadataPatch.reviewed_at,
-                review_notes: metadataPatch.review_notes
-            });
-        } finally {
-            pgClient.release();
-        }
-    });
-
-    fastify.get(`${uri}/session/:sessionId`, {
-        schema: {
-            params: {
-                type: 'object',
-                required: ['sessionId'],
-                properties: {
-                    sessionId: { type: 'string' }
-                }
-            },
-            response: {
-                200: {
-                    type: 'array',
-                    items: {
-                        type: 'object',
-                        properties: {
-                            id: { type: 'string' },
-                            student_id: { type: 'string' },
-                            student_name: { type: 'string' },
-                            student_email: { type: 'string' },
-                            status: { type: 'string' },
-                            timestamp: { type: 'string', format: 'date-time' },
-                            checked_in_at: { type: 'string', format: 'date-time' },
-                            latitude: { type: 'number' },
-                            longitude: { type: 'number' },
-                            distance_from_venue_meters: { type: 'number' },
-                            liveness_passed: { type: 'boolean' },
-                            liveness_score: { type: ['number', 'null'] },
-                            risk_score: { type: ['number', 'null'] },
-                            risk_factors: { type: 'array', items: { type: 'object' } }
-                        }
-                    }
-                }
-            }
-        },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
-    }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { sessionId } = req.params as { sessionId: string };
-            const checkins = await CheckinModel.listBySession(pgClient, sessionId);
-            res.status(200).send(checkins);
-        } finally {
-            pgClient.release();
-        }
-    });
 }
 
 export default fp(checkinController);

@@ -8,7 +8,7 @@ import bcrypt from 'bcrypt';
 async function userController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/users`;
 
-    fastify.get(uri,
+    fastify.get(`${uri}/`,
         {
             schema: {
                 querystring: {

@@ -217,6 +217,8 @@ export const EnrollmentModel = {
                 enrolled = enrollments.length;
                 already_enrolled = studentEmails.length - enrolled;
 
+                // TODO: Use nodemailer to send email their password
+
                 return {
                     enrolled,
                     already_enrolled,

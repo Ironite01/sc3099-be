@@ -76,7 +76,7 @@ function enrollmentController(fastify: FastifyInstance) {
             }
         });
 
-    fastify.post(uri, {
+    fastify.post(`${uri}/`, {
         schema: {
             body: {
                 type: "object",

@@ -1,17 +1,16 @@
 import type { PoolClient } from 'pg';
-import { AppError, BadRequestError } from './error.js';
+import { AppError, BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
 import { SESSION_STATUS, SessionModel } from './session.js';
 import { DeviceModel } from './device.js';
 import { EnrollmentModel } from './enrollment.js';
 import haversineDistance from '../helpers/haversineDistance.js';
 import { MlServices } from '../services/ml/index.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
-import { UserModel } from './user.js';
+import { USER_ROLE_TYPES, UserModel } from './user.js';
 import { isBase64 } from '../helpers/regex.js';
-import { DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
+import { APPEAL_WINDOW_MS, DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/constants.js';
 import { parseQrPayload, secureEqualsHex, signQrPayload } from '../helpers/qr.js';
 import getRiskLevel from '../helpers/getRiskLevels.js';
-import type { RiskAssessPostRequest } from '../services/ml/risk/assess.js';
 
 export enum CHECKIN_STATUS {
     PENDING = 'pending',
@@ -27,43 +26,32 @@ export type Checkin = {
     student_id: string;
     status: CHECKIN_STATUS;
     checked_in_at: Date;
+    reviewed_at?: Date | null;
+    reviewed_notes?: string | null;
+    reviewed_by_id?: string | null;
+    qr_code_verified: boolean;
     latitude: number;
     longitude: number;
+    location_accuracy_meters: number;
+    verified_at: Date | null;
     distance_from_venue_meters: number;
     liveness_passed: boolean;
     liveness_score: number | null;
+    liveness_challenge_type: LivenessChallengeType | null;
     risk_score: number | null;
     risk_factors: Record<string, any>[];
+    appealed_at?: string | null;
+    appeal_reason?: string | null;
+    face_embedding_hash?: string | null;
+    face_match_score?: number | null;
+    face_match_passed?: boolean | null;
 };
 
-export type SessionCheckinRecord = {
-    id: string;
-    student_id: string;
-    student_name: string;
-    student_email: string;
-    status: CHECKIN_STATUS;
-    timestamp: Date;
-    checked_in_at: Date;
-    latitude: number;
-    longitude: number;
-    distance_from_venue_meters: number;
-    liveness_passed: boolean;
-    liveness_score: number | null;
-    risk_score: number | null;
-    risk_factors: Record<string, any>[];
-};
-
-export type StudentCheckinRecord = {
-    id: string;
-    session_id: string;
-    session_name: string;
-    course_id: string;
-    course_code: string;
-    course_name: string;
-    status: CHECKIN_STATUS;
-    checked_in_at: Date;
-    risk_score: number | null;
-};
+function normalizeRiskFactors(value: any): any[] {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === 'object') return [value];
+    return [];
+}
 
 export const CheckinModel = {
     create: async function create(
@@ -290,27 +278,154 @@ export const CheckinModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    listByStudent: async function listByStudent(
-        pgClient: PoolClient,
-        studentId: string,
-        filters: { course_id?: string; limit?: number }
-    ): Promise<StudentCheckinRecord[]> {
-        const { course_id, limit = 50 } = filters;
-        const params: any[] = [studentId];
-        let where = 'WHERE ci.student_id = $1';
+    getFilteredCheckins: async (pgClient: PoolClient, user: { sub: string; role: USER_ROLE_TYPES }, data: {
+        session_id?: string;
+        course_id?: string;
+        student_id?: string;
+        status?: CHECKIN_STATUS[];
+        min_risk_score?: number;
+        max_risk_score?: number;
+        start_date?: string;
+        end_date?: string;
+        limit?: number;
+        offset?: number;
+    }) => {
+        try {
+            let {
+                session_id,
+                course_id,
+                student_id,
+                status,
+                min_risk_score,
+                max_risk_score,
+                start_date,
+                end_date,
+                limit = 50,
+                offset = 0
+            } = data;
 
-        if (course_id) {
-            params.push(course_id);
-            where += ` AND s.course_id = $${params.length}`;
+            const params: any[] = [];
+            const where: string[] = [];
+
+            // Instructors only can see checkins related to their courses
+            // They should see checkins for all sessions in their courses
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                params.push(user.sub);
+                where.push(`c.instructor_id = $${params.length}`);
+            } else if (user.role === USER_ROLE_TYPES.TA) {
+                params.push(user.sub);
+                where.push(`s.instructor_id = $${params.length}`);
+            }
+
+            if (session_id) {
+                params.push(session_id);
+                where.push(`ci.session_id = $${params.length}`);
+            }
+            if (course_id) {
+                params.push(course_id);
+                where.push(`s.course_id = $${params.length}`);
+            }
+            if (student_id) {
+                params.push(student_id);
+                where.push(`ci.student_id = $${params.length}`);
+            }
+            if (status && status.length > 0) {
+                params.push(status);
+                where.push(`ci.status = ANY($${params.length}}::text[])`);
+            }
+            if (min_risk_score !== undefined) {
+                params.push(min_risk_score);
+                where.push(`ci.risk_score >= $${params.length}`);
+            }
+            if (max_risk_score !== undefined) {
+                params.push(max_risk_score);
+                where.push(`ci.risk_score <= $${params.length}`);
+            }
+            if (start_date) {
+                params.push(start_date);
+                where.push(`ci.checked_in_at >= $${params.length}`);
+            }
+            if (end_date) {
+                params.push(end_date);
+                where.push(`ci.checked_in_at <= $${params.length}`);
+            }
+
+            const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+            const countResult = await pgClient.query(
+                `SELECT COUNT(*)::int AS total
+                 FROM checkins ci
+                 JOIN sessions s ON s.id = ci.session_id
+                 JOIN courses c ON c.id = s.course_id
+                 ${whereClause}`,
+                params
+            );
+
+            params.push(limit, offset);
+            const { rows } = await pgClient.query(
+                `SELECT ci.id,
+                        ci.session_id,
+                        s.name AS session_name,
+                        ci.student_id,
+                        u.full_name AS student_name,
+                        u.email AS student_email,
+                        ci.status,
+                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                        ci.distance_from_venue_meters,
+                        ci.risk_score,
+                        ci.risk_factors,
+                        ci.liveness_passed
+                        ci.appealed_at,
+                        ci.appeal_reason
+                 FROM checkins ci
+                 JOIN sessions s ON s.id = ci.session_id
+                 JOIN courses c ON c.id = s.course_id
+                 JOIN users u ON u.id = ci.student_id
+                 ${whereClause}
+                 ORDER BY ci.checked_in_at DESC
+                 LIMIT $${params.length - 1}
+                 OFFSET $${params.length}`,
+                params
+            );
+
+            const items = rows.map((row) => ({
+                ...row,
+                risk_factors: normalizeRiskFactors(row.risk_factors)
+            }));
+
+            return {
+                items: items as (Checkin & { session_name: string; student_name: string; student_email: string })[],
+                total: countResult.rows[0]?.total ?? 0,
+                limit,
+                offset
+            }
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
+    },
+    getFilteredCheckinsByStudentId: async (pgClient: PoolClient, studentId: string, filters: { limit?: number; course_id?: string }) => {
+        try {
+            if (!studentId) {
+                throw new UnauthorizedError();
+            }
 
-        params.push(Math.max(1, Math.min(limit, 200)));
+            const { course_id, limit = 50 } = filters;
+            const params: any[] = [studentId];
+            let where = 'WHERE ci.student_id = $1';
 
-        const { rows } = await pgClient.query(
-            `SELECT ci.id,
+            if (course_id) {
+                params.push(course_id);
+                where += ` AND s.course_id = $${params.length}`;
+            }
+
+            params.push(Math.max(1, Math.min(limit, 200)));
+
+            const { rows } = await pgClient.query(
+                `SELECT ci.id,
                     ci.session_id,
                     s.name AS session_name,
-                    s.course_id,
+                    s.course_id as course_id,
                     c.code AS course_code,
                     c.name AS course_name,
                     ci.status,
@@ -322,18 +437,78 @@ export const CheckinModel = {
              ${where}
              ORDER BY ci.checked_in_at DESC
              LIMIT $${params.length}`,
-            params
-        );
+                params
+            );
 
-        return rows as (StudentCheckinRecord[] & { recommendations?: string[] });
+            return rows as (Partial<Checkin> & { session_name: string; course_id: string; course_code: string; course_name: string })[];
+
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     },
+    getByIdAndUser: async (pgClient: PoolClient, user: { sub: string, role: USER_ROLE_TYPES }, checkin_id: string) => {
+        try {
+            const role = user.role as USER_ROLE_TYPES;
+            const userId = user.sub as string;
 
-    listBySession: async function listBySession(
-        pgClient: PoolClient,
-        sessionId: string
-    ): Promise<SessionCheckinRecord[]> {
-        const { rows } = await pgClient.query(
-            `SELECT c.id,
+            let query = `SELECT ci.id, ci.session_id, ci.student_id, ci.status,
+                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                        ci.latitude, ci.longitude, ci.distance_from_venue_meters,
+                        ci.liveness_passed, ci.liveness_score, ci.risk_score, ci.risk_factors,
+                        s.course_id, s.name AS session_name,
+                        c.code AS course_code, c.name AS course_name, ci.appealed_at,
+                        u.full_name AS student_name, u.email AS student_email
+                 FROM checkins ci
+                 JOIN sessions s ON s.id = ci.session_id
+                 JOIN courses c ON c.id = s.course_id
+                 JOIN users u ON u.id = ci.student_id
+                 WHERE ci.id = $1`;
+            let params = [checkin_id];
+
+            switch (role) {
+                case USER_ROLE_TYPES.STUDENT:
+                    query += ` AND ci.student_id = $2`;
+                    params.push(userId);
+                    break;
+                case USER_ROLE_TYPES.INSTRUCTOR:
+                    query += ` AND c.instructor_id = $2`;
+                    params.push(userId);
+                    break;
+                case USER_ROLE_TYPES.TA:
+                    query += ` AND s.instructor_id = $2`;
+                    params.push(userId);
+                    break;
+                case USER_ROLE_TYPES.ADMIN:
+                    // Do nothing...
+                    break;
+                default:
+                    throw new UnauthorizedError();
+            }
+
+            const { rows } = await pgClient.query(query, params);
+
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+
+            return rows[0] as (Checkin & {
+                session_name: string;
+                course_id: string;
+                course_code: string;
+                course_name: string;
+                student_name: string;
+                student_email: string;
+            });
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    getBySessionIdAndUser: async (pgClient: PoolClient, user: { sub: string, role: USER_ROLE_TYPES }, sessionId: string) => {
+        try {
+            const { rows } = await pgClient.query(
+                `SELECT c.id,
                     c.student_id,
                     u.full_name AS student_name,
                     u.email AS student_email,
@@ -346,41 +521,66 @@ export const CheckinModel = {
                     c.liveness_passed,
                     c.liveness_score,
                     c.risk_score,
-                    c.risk_factors
+                    c.risk_factors,
+                    d.is_trusted as device_is_trusted
              FROM checkins c
              INNER JOIN users u ON u.id = c.student_id
-             WHERE c.session_id = $1
+             INNER JOIN sessions s ON s.id = c.session_id
+             INNER JOIN devices d on d.id = c.device_id
+             WHERE c.session_id = $1 ${user.role !== USER_ROLE_TYPES.ADMIN ? ' AND s.instructor_id = $2' : ''}
              ORDER BY c.checked_in_at DESC`,
-            [sessionId]
-        );
+                user.role !== USER_ROLE_TYPES.ADMIN ? [sessionId, user.sub] : [sessionId]
+            );
 
-        return rows.map((row) => {
-            const normalizedRiskFactors = Array.isArray(row.risk_factors)
-                ? row.risk_factors
-                : row.risk_factors && typeof row.risk_factors === 'object'
-                    ? [row.risk_factors]
-                    : [];
+            return rows.map((row) => ({
+                ...row,
+                risk_factors: normalizeRiskFactors(row.risk_factors)
+            }));
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    appeal: async (pgClient: PoolClient, studentId: string, checkinId: string, appeal_reason: string) => {
+        try {
+            const currentCheckin = await CheckinModel.getByIdAndUser(pgClient, { sub: studentId, role: USER_ROLE_TYPES.STUDENT }, checkinId);
+            if (!currentCheckin) {
+                throw new NotFoundError();
+            }
+
+            if (![CHECKIN_STATUS.REJECTED, CHECKIN_STATUS.FLAGGED].includes(currentCheckin.status)) {
+                throw new BadRequestError('Only rejected or flagged check-ins can be appealed');
+            }
+
+            if (currentCheckin.appealed_at) {
+                throw new BadRequestError('Check-in has already been appealed');
+            }
+
+            const checkedInAt = new Date(currentCheckin.checked_in_at).getTime();
+            if (Date.now() - checkedInAt > APPEAL_WINDOW_MS) {
+                throw new BadRequestError('Appeal window has expired');
+            }
+
+            const { rows } = await pgClient.query(
+                `UPDATE checkins
+                 SET status = $4, appealed_reason = $3, appealed_at = NOW()
+                 WHERE id = $1 AND student_id = $2
+                 RETURNING id, status, appeal_reason, appealed_at`,
+                [checkinId, studentId, appeal_reason, CHECKIN_STATUS.APPEALED]
+            );
+
+            const updated = rows[0] as Partial<Checkin>;
 
             return {
-                ...row,
-                risk_factors: normalizedRiskFactors
-            } as SessionCheckinRecord;
-        });
+                id: updated.id,
+                status: updated.status,
+                appeal_reason: updated.appeal_reason,
+                appealed_at: updated.appealed_at
+            }
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     },
-    getBySessionAndStudent: async function getBySessionAndStudent(
-        pgClient: PoolClient,
-        sessionId: string,
-        studentId: string
-    ): Promise<Checkin | null> {
-        const { rows } = await pgClient.query(
-            `SELECT id, session_id, student_id, status, checked_in_at, latitude, longitude,
-                    distance_from_venue_meters, liveness_passed, liveness_score, risk_score, risk_factors
-             FROM checkins
-             WHERE session_id = $1 AND student_id = $2
-             ORDER BY checked_in_at DESC
-             LIMIT 1`,
-            [sessionId, studentId]
-        );
-        return (rows[0] as Checkin) || null;
-    }
+
 };

@@ -134,7 +134,7 @@ async function sessionController(fastify: any) {
     const adminUri = '/api/v1/admin/sessions';
     const uri = `${BASE_URL}/sessions`;
 
-    fastify.get(uri, {
+    fastify.get(`${uri}/`, {
         schema: {
             querystring: {
                 type: 'object',
@@ -243,7 +243,7 @@ async function sessionController(fastify: any) {
         }
     });
 
-    fastify.post(uri, {
+    fastify.post(`${uri}/`, {
         schema: {
             body: {
                 type: 'object',
