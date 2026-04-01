@@ -171,7 +171,7 @@ export const AuditModel = {
         pgClient: PoolClient,
         data:
             {
-                userId: string,
+                userId: string | null,
                 action: AUDIT_ACTIONS,
                 resourceType: string,
                 resourceId: string,
@@ -183,7 +183,7 @@ export const AuditModel = {
             }) => {
         try {
             let { userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, details } = data;
-            if (!deviceId && action !== AUDIT_ACTIONS.USER_CREATED) {
+            if (!deviceId && action !== AUDIT_ACTIONS.USER_CREATED && userId) {
                 const devices = await DeviceModel.getByUserId(pgClient, userId);
                 if (devices.length > 0) {
                     deviceId = devices[0]!.id;
@@ -195,7 +195,7 @@ export const AuditModel = {
                 `INSERT INTO audit_logs 
                     (id, user_id, action, resource_type, resource_id, ip_address, user_agent, device_id, success, details, timestamp)
                  VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-                [userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, JSON.stringify(details || {})]
+                [userId || null, action, resourceType, resourceId, ipAddress, userAgent, deviceId || null, success, JSON.stringify(details || {})]
             );
         } catch (error) {
             console.error('Failed to insert audit log:', error);

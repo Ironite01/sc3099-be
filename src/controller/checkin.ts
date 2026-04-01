@@ -5,7 +5,6 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
-import user from './user.js';
 
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
@@ -56,7 +55,7 @@ async function checkinController(fastify: FastifyInstance) {
             const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
 
             let auditAction = AUDIT_ACTIONS.CHECKIN_ATTEMPTED;
-            let details;
+            let details = {};
             switch (checkin.status) {
                 case CHECKIN_STATUS.APPROVED:
                     auditAction = AUDIT_ACTIONS.CHECKIN_APPROVED;
@@ -85,12 +84,7 @@ async function checkinController(fastify: FastifyInstance) {
                 ipAddress: ipAddr,
                 userAgent: userAgent || '',
                 success: true,
-                details: {
-                    session_id: checkin.session_id,
-                    risk_score: checkin.risk_score,
-                    liveness_passed: checkin.liveness_passed,
-                    distance_meters: checkin.distance_from_venue_meters
-                }
+                details
             });
 
 
@@ -117,7 +111,7 @@ async function checkinController(fastify: FastifyInstance) {
                 resourceId: session_id,
                 ipAddress: ipAddr,
                 userAgent: userAgent || '',
-                success: true,
+                success: false,
                 details: {
                     student_id: userId,
                     session_id,

@@ -119,8 +119,38 @@ async function authController(fastify: FastifyInstance) {
             } catch (err) {
                 loginTotal.inc({ status: 'failure' });
 
+                // Check for multiple failed login attempts (brute force detection)
+                const failedAttemptsKey = `failed_login:${req.ip}`;
+                let failedAttempts = 0;
+                try {
+                    const redis = (fastify as any).redis;
+                    if (redis) {
+                        const current = await redis.incr(failedAttemptsKey);
+                        if (current === 1) {
+                            await redis.expire(failedAttemptsKey, 3600); // 1 hour window
+                        }
+                        failedAttempts = current || 0;
+
+                        // Log as security_violation if multiple failures detected
+                        if (failedAttempts >= 5) {
+                            await AuditModel.log(pgClient, {
+                                userId: null,
+                                action: AUDIT_ACTIONS.SECURITY_VIOLATION,
+                                resourceType,
+                                resourceId: email,
+                                ipAddress: req.ip,
+                                userAgent: req.headers['user-agent'] || '',
+                                success: false,
+                                details: { violation_type: 'brute_force_attempt', failed_attempts: failedAttempts, email: email }
+                            });
+                        }
+                    }
+                } catch (redisErr) {
+                    console.error('Failed to check login attempts:', redisErr);
+                }
+
                 await AuditModel.log(pgClient, {
-                    userId: email,
+                    userId: null,
                     action: AUDIT_ACTIONS.LOGIN_FAILED,
                     resourceType,
                     resourceId: email,
