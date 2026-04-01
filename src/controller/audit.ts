@@ -5,7 +5,8 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { AuditModel } from '../model/audit.js';
 
 async function auditController(fastify: FastifyInstance) {
-    fastify.get(`${BASE_URL}/audit/`, {
+    const uri = `${BASE_URL}/audit`;
+    fastify.get(`${uri}/`, {
         schema: {
             querystring: {
                 type: 'object',
@@ -47,7 +48,7 @@ async function auditController(fastify: FastifyInstance) {
     });
 
     // GET /api/v1/audit/summary  (admin only)
-    fastify.get(`${BASE_URL}/audit/summary`, {
+    fastify.get(`${uri}/summary`, {
         schema: {
             querystring: {
                 type: 'object',

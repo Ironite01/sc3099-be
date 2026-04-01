@@ -25,14 +25,7 @@ async function courseController(fastify: any) {
         const pgClient = await fastify.pg.connect();
         try {
             const { is_active, semester, limit = 50, offset = 0 } = req.query as any;
-            let req_instructor_id = (req.query as any).instructor_id;
-
-            const user = req.user as any;
-
-            // For TAs and Instructors, we only allow them to view their own courses
-            if (user && (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA)) {
-                req_instructor_id = user.sub;
-            }
+            let req_instructor_id = (req.user as any).role === USER_ROLE_TYPES.ADMIN ? (req.query as any).instructor_id : null;
 
             const { items, total } = await CourseModel.getFilteredCourses(pgClient, {
                 is_active,
@@ -54,14 +47,12 @@ async function courseController(fastify: any) {
                 required: ['course_id'],
                 properties: { course_id: { type: 'string' } }
             }
-        }, preHandler: [fastify.rateLimit()]
+        }, preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const { course_id } = req.params as any;
-            const user = req.user as any;
-
-            const course = await CourseModel.findById(pgClient, course_id, user);
+            const course = await CourseModel.findById(pgClient, course_id);
 
             res.status(200).send(course);
         } finally {
@@ -89,16 +80,11 @@ async function courseController(fastify: any) {
                 },
                 required: ['code', 'name', 'semester'],
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
-            const user = req.user as any;
             const body = { ...(req.body as any) };
-
-            if (!body.instructor_id) {
-                body.instructor_id = user?.sub;
-            }
 
             const course = await CourseModel.create(pgClient, body);
             res.status(201).send(course);

@@ -30,7 +30,7 @@ export const CourseModel = {
     }): Promise<{ items: Course[]; total: number }> => {
         const { is_active, semester, instructor_id, limit = 50, offset = 0 } = filters;
 
-        let query = `SELECT c.* FROM courses c WHERE 1=1`;
+        let query = `SELECT c.*, u.full_name as instructor_name FROM courses c LEFT JOIN users u ON c.instructor_id = u.id WHERE 1=1`;
         let countQuery = `SELECT COUNT(*) FROM courses c WHERE 1=1`;
         const params: any[] = [];
         const countParams: any[] = [];
@@ -66,15 +66,15 @@ export const CourseModel = {
         const total = parseInt(countResult.rows[0].count);
 
         return {
-            items: result.rows.map((row: Course) => (
+            items: result.rows.map((row: any) => (
                 {
                     "id": row.id,
                     "code": row.code,
                     "name": row.name,
                     "semester": row.semester,
                     "instructor_id": row.instructor_id,
-                    "instructor_name": "Dr. Smith",
-                    "venue_name": "LT1",
+                    "instructor_name": row.instructor_name,
+                    "venue_name": row.venue_name,
                     "venue_latitude": row.venue_latitude,
                     "venue_longitude": row.venue_longitude,
                     "geofence_radius_meters": row.geofence_radius_meters,
@@ -85,23 +85,13 @@ export const CourseModel = {
             )), total
         };
     },
-    findById: async (pgClient: any, id: string, user: { role: USER_ROLE_TYPES, sub: string }): Promise<Course | null> => {
-        let instructor_id: string | undefined;
-        // For TAs and Instructors, we only allow them to view their own courses
-        if (user && (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA)) {
-            instructor_id = user.sub;
-        }
-
+    findById: async (pgClient: any, id: string): Promise<Course | null> => {
         const { rows } = await pgClient.query('SELECT * FROM courses WHERE id = $1', [id]);
 
         if (rows.length === 0) {
             throw new NotFoundError('Course not found');
         }
-        const course = rows[0] as Course;
-        if (course.instructor_id !== instructor_id) {
-            throw new UnauthorizedError();
-        }
-        return course;
+        return rows[0] as Course;
     },
     create: async (pgClient: any, data: {
         code: string;
@@ -177,8 +167,9 @@ export const CourseModel = {
     }, user: { sub: string; role: USER_ROLE_TYPES }): Promise<Course | null> => {
         try {
             // For instructors, we only allow them to edit their own courses
-            if (user && user.role === USER_ROLE_TYPES.INSTRUCTOR && (data.instructor_id !== user.sub)) {
-                throw new UnauthorizedError();
+            // Prevent instructors from changing course ownership to someone else
+            if (user && user.role === USER_ROLE_TYPES.INSTRUCTOR && data.instructor_id !== undefined && data.instructor_id !== user.sub) {
+                throw new UnauthorizedError('Instructors cannot change course ownership');
             }
 
             const fields: string[] = [];
@@ -205,7 +196,12 @@ export const CourseModel = {
             fields.push('updated_at = NOW()');
             values.push(id);
 
-            const query = `UPDATE courses SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+            let query = `UPDATE courses SET ${fields.join(', ')} WHERE id = $${paramIndex}`;
+            if (user && user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                query += ` AND instructor_id = $${paramIndex + 1}`;
+                values.push(user.sub);
+            }
+            query += ` RETURNING *`;
             const { rows } = await pgClient.query(query, values);
 
             if (rows.length === 0) {
