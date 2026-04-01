@@ -16,6 +16,7 @@ import { MlServices } from './services/ml/index.js';
 // import metricsPlugin from './services/metrics.js';
 
 const server = fastify({
+    ignoreTrailingSlash: true,
     ajv: {
         customOptions: {
             removeAdditional: false,
