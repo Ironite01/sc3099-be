@@ -5,7 +5,7 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { CourseModel } from '../model/course.js';
 
 async function courseController(fastify: any) {
-    const uri = `${BASE_URL}/courses'`;
+    const uri = `${BASE_URL}/courses`;
 
     fastify.get(`${uri}/`, {
         schema: {

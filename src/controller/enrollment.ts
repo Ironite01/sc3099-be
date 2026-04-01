@@ -3,7 +3,6 @@ import fp from "fastify-plugin";
 import { USER_ROLE_TYPES } from "../model/user.js";
 import { EnrollmentModel } from "../model/enrollment.js";
 import { BASE_URL } from "../helpers/constants.js";
-import pg from "../services/pg.js";
 
 function enrollmentController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/enrollments`;

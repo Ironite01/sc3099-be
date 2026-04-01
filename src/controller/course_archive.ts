@@ -4,7 +4,7 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { BASE_URL } from '../helpers/constants.js';
 
 // These are APIs that are not from API specs
-async function courseController(fastify: any) {
+async function course_archiveController(fastify: any) {
     const uri = `${BASE_URL}/courses'`;
 
     fastify.get(`${uri}/available`, {
@@ -87,4 +87,4 @@ async function courseController(fastify: any) {
     });
 }
 
-export default fp(courseController);
+export default fp(course_archiveController);
