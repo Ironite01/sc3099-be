@@ -363,22 +363,25 @@ async function checkinController(fastify: FastifyInstance) {
         const { sessionId } = req.params as { sessionId: string };
         const checkins = await CheckinModel.getBySessionIdAndUser(prisma, req.user as any, sessionId);
 
-        res.status(200).send(checkins.map((c: any) => ({
-            id: c.id,
-            student_id: c.student_id,
-            student_name: c.student_name,
-            student_email: c.student_email,
-            status: c.status,
-            checked_in_at: c.checked_in_at,
-            distance_from_venue_meters: c.distance_from_venue_meters,
-            risk_score: c.risk_score,
-            risk_factors: c.risk_factors,
-            risk_signals: c.risk_signals || [],
-            liveness_passed: c.liveness_passed,
-            liveness_score: c.liveness_score,
-            face_match_score: c.face_match_score,
-            device_trusted: c.device_is_trusted
-        })));
+            res.status(200).send(checkins.map((c) => ({
+                id: c.id,
+                student_id: c.student_id,
+                student_name: c.student_name,
+                student_email: c.student_email,
+                status: c.status,
+                checked_in_at: c.checked_in_at,
+                distance_from_venue_meters: c.distance_from_venue_meters,
+                risk_score: c.risk_score,
+                risk_factors: c.risk_factors,
+                risk_signals: c.risk_signals || [],
+                liveness_passed: c.liveness_passed,
+                liveness_score: c.liveness_score,
+                face_match_score: c.face_match_score,
+                device_trusted: c.device_is_trusted
+            })));
+        } finally {
+            pgClient.release();
+        }
     });
 
     fastify.get(`${uri}/flagged`, {

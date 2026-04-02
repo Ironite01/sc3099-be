@@ -147,38 +147,16 @@ export const CourseModel = {
                 where.instructor_id = user.sub;
             }
 
-            return await prisma.courses.update({
-                where,
-                data: {
-                    ...(data.name !== undefined && { name: data.name }),
-                    ...(data.description !== undefined && { description: data.description }),
-                    ...(data.venue_name !== undefined && { venue_name: data.venue_name }),
-                    ...(data.venue_latitude !== undefined && { venue_latitude: data.venue_latitude }),
-                    ...(data.venue_longitude !== undefined && { venue_longitude: data.venue_longitude }),
-                    ...(data.geofence_radius_meters !== undefined && { geofence_radius_meters: data.geofence_radius_meters }),
-                    ...(data.require_face_recognition !== undefined && { require_face_recognition: data.require_face_recognition }),
-                    ...(data.require_device_binding !== undefined && { require_device_binding: data.require_device_binding }),
-                    ...(data.risk_threshold !== undefined && { risk_threshold: data.risk_threshold }),
-                    ...(data.is_active !== undefined && { is_active: data.is_active }),
-                    ...(data.instructor_id !== undefined && USER_ROLE_TYPES.ADMIN && { instructor_id: data.instructor_id }),
-                    updated_at: new Date()
-                } as any
-            }) as Course;
-        } catch (err: any) {
-            if (err?.code === PrismaCodeMap.NOT_FOUND) {
-                throw new NotFoundError('Course not found');
-            }
-            if (err instanceof AppError) throw err;
-            throw new BadRequestError('Database operation failed');
-        }
-    },
-    delete: async (prisma: PrismaClient, id: string): Promise<void> => {
-        try {
-            await prisma.courses.update({
-                where: { id },
-                data: {
-                    is_active: false,
-                    updated_at: new Date()
+            const UPDATABLE_FIELDS = [
+                'name', 'description', 'venue_name', 'venue_latitude', 'venue_longitude',
+                'geofence_radius_meters', 'require_face_recognition', 'require_device_binding',
+                'risk_threshold', 'is_active', 'instructor_id'
+            ];
+
+            for (const field of UPDATABLE_FIELDS) {
+                if ((data as any)[field] !== undefined) {
+                    fields.push(`${field} = $${paramIndex++}`);
+                    values.push((data as any)[field]);
                 }
             });
         } catch (err: any) {
