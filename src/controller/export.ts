@@ -60,7 +60,18 @@ async function exportController(fastify: FastifyInstance) {
 
             const allCheckins = checkinRes.items;
             if (allCheckins.length === 0) {
-                return res.status(200).send(format === 'json' ? [] : '');
+                if (format === 'json') {
+                    return res.status(200).send({
+                        course_id: courseId,
+                        summary: {
+                            total_enrolled: 0,
+                            total_records: 0,
+                            attendance_rate: 0
+                        },
+                        records: []
+                    });
+                }
+                return res.status(200).send('');
             }
 
             const rows = allCheckins.map(r => ({
@@ -83,7 +94,15 @@ async function exportController(fastify: FastifyInstance) {
             if (format === 'json') {
                 res.header('Content-Type', 'application/json');
                 res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.json"`);
-                return res.status(200).send(rows);
+                return res.status(200).send({
+                    course_id: courseId,
+                    summary: {
+                        total_enrolled: rows.length,
+                        total_records: rows.length,
+                        attendance_rate: 100
+                    },
+                    records: rows
+                });
             }
 
             const csv = toCsv(rows as Record<string, unknown>[]);
@@ -138,7 +157,18 @@ async function exportController(fastify: FastifyInstance) {
 
             const allCheckins = checkinRes.items;
             if (allCheckins.length === 0) {
-                return res.status(200).send(format === 'json' ? [] : '');
+                if (format === 'json') {
+                    return res.status(200).send({
+                        session_id: sessionId,
+                        summary: {
+                            total_enrolled: 0,
+                            total_records: 0,
+                            attendance_rate: 0
+                        },
+                        records: []
+                    });
+                }
+                return res.status(200).send('');
             }
 
             const rows = allCheckins.map(r => ({
@@ -161,7 +191,15 @@ async function exportController(fastify: FastifyInstance) {
             if (format === 'json') {
                 res.header('Content-Type', 'application/json');
                 res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.json"`);
-                return res.status(200).send(rows);
+                return res.status(200).send({
+                    session_id: sessionId,
+                    summary: {
+                        total_enrolled: rows.length,
+                        total_records: rows.length,
+                        attendance_rate: 100
+                    },
+                    records: rows
+                });
             }
 
             const csv = toCsv(rows as Record<string, unknown>[]);

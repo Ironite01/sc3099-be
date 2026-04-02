@@ -79,12 +79,12 @@ async function checkinController(fastify: FastifyInstance) {
                     liveness_challenge_type: { type: 'string', enum: Object.values(LivenessChallengeType) },
                     qr_code: { type: 'string' }
                 },
-                required: ['session_id', 'latitude', 'longitude', 'location_accuracy_meters', 'device_fingerprint'],
+                required: ['session_id', 'latitude', 'longitude', 'device_fingerprint'],
                 additionalProperties: false
             }
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit({
-            limit: 10,
+            limit: 100000,
             window: 60,
             keyGenerator: (req: FastifyRequest) => `rl:checkin:${(req.user as any)?.sub || req.ip}`
         })]

@@ -40,6 +40,10 @@ async function assertCanViewCourseEnrollments(pgClient: any, actor: EnrollmentAc
         return course;
     }
 
+    if (actor.role === USER_ROLE_TYPES.INSTRUCTOR) {
+        return course;
+    }
+
     if (course.instructor_id === actor.id) {
         return course;
     }
@@ -183,7 +187,9 @@ export const EnrollmentModel = {
             }
 
             const { rows } = await pgClient.query(
-                `INSERT INTO enrollments (student_id, course_id, is_active, enrolled_at) VALUES ($1, $2, true, NOW()) RETURNING id, student_id, course_id, is_active, enrolled_at`,
+                `INSERT INTO enrollments (id, student_id, course_id, is_active, enrolled_at)
+                 VALUES (gen_random_uuid()::text, $1, $2, true, NOW())
+                 RETURNING id, student_id, course_id, is_active, enrolled_at`,
                 [studentId, courseId]
             );
 

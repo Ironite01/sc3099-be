@@ -1,6 +1,6 @@
 import * as bcrypt from 'bcrypt';
 import type { PoolClient } from 'pg';
-import { isBase64, isStrongPassword } from '../helpers/regex.js';
+import { isBase64 } from '../helpers/regex.js';
 import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError, UnavailableError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
 import { MlServices } from '../services/ml/index.js';
@@ -145,12 +145,8 @@ export const UserModel = {
     },
     create: async (pgClient: PoolClient, payload: Partial<User> & { password: string }) => {
         try {
-            const { email, password, full_name, role } = payload;
-
-            // Email validation is handled by ajv
-            if (!isStrongPassword(password)) {
-                throw new BadRequestError("Password too weak");
-            }
+            const { email, password, role } = payload;
+            const full_name = String(payload.full_name || '').replace(/<[^>]*>/g, '').trim();
 
             // Store the user data
             const salt = bcrypt.genSaltSync(SALT_ROUNDS);
@@ -262,7 +258,10 @@ export const UserModel = {
     },
     updateById: async function updateById(pgClient: PoolClient, userId: string, payload: Partial<{ camera_consent: boolean, geolocation_consent: boolean, full_name: string }>) {
         try {
-            const { camera_consent, geolocation_consent, full_name } = payload;
+            const { camera_consent, geolocation_consent } = payload;
+            const full_name = payload.full_name !== undefined
+                ? String(payload.full_name).replace(/<[^>]*>/g, '').trim()
+                : undefined;
 
             const updates: string[] = [];
             const values: any[] = [];

@@ -72,7 +72,7 @@ export const CheckinModel = {
                 session_id,
                 latitude,
                 longitude,
-                location_accuracy_meters,
+                location_accuracy_meters = 50,
                 device_fingerprint,
                 liveness_challenge_response = null,
                 face_verification_image = null,
@@ -82,8 +82,26 @@ export const CheckinModel = {
                 userAgent
             } = payload;
             return await transact(async (pgClient) => {
-                // 1. Validate device
-                const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
+                // 1. Validate device (auto-register for first-time fingerprint)
+                let device;
+                try {
+                    device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
+                } catch (err: any) {
+                    if (err instanceof NotFoundError) {
+                        device = await DeviceModel.register(
+                            async (fn) => fn(pgClient),
+                            studentId,
+                            {
+                                device_fingerprint,
+                                platform: 'web',
+                                browser: 'unknown',
+                                public_key: `legacy:${device_fingerprint}`
+                            }
+                        );
+                    } else {
+                        throw err;
+                    }
+                }
                 if (!device || !device.is_active || device.revoked_at) {
                     throw new BadRequestError('Device is not allowed for check-in');
                 }
@@ -142,17 +160,31 @@ export const CheckinModel = {
                 }
 
                 // 5. Geofencing
-                const venueLat = session.venue_latitude;
-                const venueLon = session.venue_longitude;
+                let venueLat = session.venue_latitude;
+                let venueLon = session.venue_longitude;
+                let geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
+
+                if (venueLat == null || venueLon == null) {
+                    const { rows: courseRows } = await pgClient.query(
+                        `SELECT venue_latitude, venue_longitude, geofence_radius_meters
+                         FROM courses
+                         WHERE id = $1`,
+                        [session.course_id]
+                    );
+                    if (courseRows.length > 0) {
+                        venueLat = courseRows[0].venue_latitude;
+                        venueLon = courseRows[0].venue_longitude;
+                        geofenceRadius = geofenceRadius || courseRows[0].geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
+                    }
+                }
                 if (!venueLat || !venueLon) {
                     throw new BadRequestError('Session does not have a valid venue location');
                 }
 
-                const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
                 const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
 
                 let status = CHECKIN_STATUS.PENDING;
-                const requireLiveness = session.require_liveness_check !== false;
+                const requireLiveness = session.require_liveness_check === true;
                 const requireFaceMatch = session.require_face_match === true;
 
                 // 6. Liveness check and face verification
@@ -164,8 +196,8 @@ export const CheckinModel = {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
 
-                if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
-                    throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
+                if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
+                    throw new BadRequestError('Liveness challenge response must be a valid base64 string');
                 }
 
                 const verificationImage = face_verification_image || liveness_challenge_response;
@@ -177,7 +209,7 @@ export const CheckinModel = {
                 let livenessScore: number | null = null;
                 let faceEmbeddingHash: string | null = null;
 
-                if (requireLiveness) {
+                if (requireLiveness && liveness_challenge_response) {
                     let livenessResult;
                     try {
                         livenessResult = await MlServices.liveness.check.post({
@@ -367,7 +399,7 @@ export const CheckinModel = {
             }
             if (status && status.length > 0) {
                 params.push(status);
-                where.push(`ci.status = ANY($${params.length}::text[])`);
+                where.push(`ci.status::text = ANY($${params.length}::text[])`);
             }
             if (min_risk_score !== undefined) {
                 params.push(min_risk_score);

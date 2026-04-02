@@ -20,12 +20,15 @@ async function courseController(fastify: any) {
                 }
             }
         },
-        preHandler: [fastify.authorize(), fastify.rateLimit()]
+        preHandler: [fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const { is_active, semester, limit = 50, offset = 0 } = req.query as any;
-            let req_instructor_id = (req.user as any).role === USER_ROLE_TYPES.ADMIN ? (req.query as any).instructor_id : null;
+            const reqUser = req.user as any;
+            const req_instructor_id = reqUser && reqUser.role === USER_ROLE_TYPES.ADMIN
+                ? (req.query as any).instructor_id
+                : null;
 
             const { items, total } = await CourseModel.getFilteredCourses(pgClient, {
                 is_active,
