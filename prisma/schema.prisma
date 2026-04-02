@@ -1,0 +1,318 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model audit_logs {
+  id            String       @id @db.VarChar(36)
+  user_id       String?      @db.VarChar(36)
+  action        audit_action
+  resource_type String?      @db.VarChar(50)
+  resource_id   String?      @db.VarChar(36)
+  ip_address    String?      @db.VarChar(45)
+  user_agent    String?      @db.VarChar(500)
+  device_id     String?      @db.VarChar(36)
+  details       String?
+  success       Boolean?     @default(true)
+  timestamp     DateTime     @db.Timestamp(6)
+  users         users?       @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([action], map: "idx_audit_logs_action")
+  @@index([ip_address], map: "idx_audit_logs_ip")
+  @@index([resource_type, resource_id], map: "idx_audit_logs_resource")
+  @@index([timestamp], map: "idx_audit_logs_timestamp")
+  @@index([user_id], map: "idx_audit_logs_user_id")
+}
+
+model checkins {
+  id                                   String         @id @db.VarChar(36)
+  session_id                           String         @db.VarChar(36)
+  student_id                           String         @db.VarChar(36)
+  device_id                            String?        @db.VarChar(36)
+  status                               checkin_status
+  checked_in_at                        DateTime       @db.Timestamp(6)
+  verified_at                          DateTime?      @db.Timestamp(6)
+  latitude                             Float?
+  longitude                            Float?
+  location_accuracy_meters             Float?
+  distance_from_venue_meters           Float?
+  liveness_passed                      Boolean?
+  liveness_score                       Float?
+  liveness_challenge_type              String?        @db.VarChar(50)
+  face_match_passed                    Boolean?
+  face_match_score                     Float?
+  face_embedding_hash                  String?        @db.VarChar(64)
+  risk_score                           Float          @default(0.0)
+  risk_factors                         String?
+  qr_code_verified                     Boolean?       @default(false)
+  reviewed_by_id                       String?        @db.VarChar(36)
+  reviewed_at                          DateTime?      @db.Timestamp(6)
+  review_notes                         String?
+  appeal_reason                        String?
+  appealed_at                          DateTime?      @db.Timestamp(6)
+  scheduled_deletion_at                DateTime?      @db.Timestamp(6)
+  devices                              devices?       @relation(fields: [device_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_checkins_reviewed_by_idTousers users?         @relation("checkins_reviewed_by_idTousers", fields: [reviewed_by_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sessions                             sessions       @relation(fields: [session_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_checkins_student_idTousers     users          @relation("checkins_student_idTousers", fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  risk_signals                         risk_signals[]
+
+  @@unique([session_id, student_id])
+  @@index([checked_in_at], map: "idx_checkins_checked_in_at")
+  @@index([risk_score], map: "idx_checkins_risk_score")
+  @@index([session_id], map: "idx_checkins_session_id")
+  @@index([status], map: "idx_checkins_status")
+  @@index([student_id], map: "idx_checkins_student_id")
+}
+
+model course_tas {
+  course_id   String
+  ta_id       String
+  assigned_at DateTime @default(now()) @db.Timestamptz(6)
+  courses     courses  @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users       users    @relation(fields: [ta_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([course_id, ta_id])
+  @@index([ta_id], map: "idx_course_tas_ta_id")
+}
+
+model courses {
+  id                       String        @id @db.VarChar(36)
+  code                     String        @unique @db.VarChar(20)
+  name                     String        @db.VarChar(255)
+  description              String?
+  semester                 String        @db.VarChar(20)
+  is_active                Boolean       @default(true)
+  venue_latitude           Float?
+  venue_longitude          Float?
+  venue_name               String?       @db.VarChar(255)
+  geofence_radius_meters   Float?        @default(100.0)
+  require_face_recognition Boolean?      @default(false)
+  require_device_binding   Boolean?      @default(true)
+  risk_threshold           Float?        @default(0.5)
+  created_at               DateTime      @db.Timestamp(6)
+  updated_at               DateTime      @db.Timestamp(6)
+  instructor_id            String        @db.VarChar
+  course_tas               course_tas[]
+  users                    users         @relation(fields: [instructor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  enrollments              enrollments[]
+  sessions                 sessions[]
+
+  @@index([code], map: "idx_courses_code")
+  @@index([instructor_id], map: "idx_courses_instructor_id")
+  @@index([is_active], map: "idx_courses_is_active")
+  @@index([semester], map: "idx_courses_semester")
+}
+
+model devices {
+  id                    String     @id @db.VarChar(36)
+  user_id               String     @db.VarChar(36)
+  device_fingerprint    String     @unique @db.VarChar(64)
+  device_name           String?    @db.VarChar(255)
+  platform              String?    @db.VarChar(50)
+  browser               String?    @db.VarChar(100)
+  os_version            String?    @db.VarChar(50)
+  app_version           String?    @db.VarChar(50)
+  public_key            String
+  public_key_created_at DateTime   @db.Timestamp(6)
+  public_key_expires_at DateTime?  @db.Timestamp(6)
+  attestation_passed    Boolean?   @default(false)
+  last_attestation_at   DateTime?  @db.Timestamp(6)
+  attestation_token     String?
+  is_trusted            Boolean?   @default(false)
+  trust_score           String?    @default("low") @db.VarChar(20)
+  is_emulator           Boolean?   @default(false)
+  is_rooted_jailbroken  Boolean?   @default(false)
+  first_seen_at         DateTime   @db.Timestamp(6)
+  last_seen_at          DateTime   @db.Timestamp(6)
+  total_checkins        Int?       @default(0)
+  is_active             Boolean    @default(true)
+  revoked_at            DateTime?  @db.Timestamp(6)
+  revocation_reason     String?
+  checkins              checkins[]
+  users                 users      @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([device_fingerprint], map: "idx_devices_fingerprint")
+  @@index([is_active], map: "idx_devices_is_active")
+  @@index([is_trusted], map: "idx_devices_is_trusted")
+  @@index([user_id], map: "idx_devices_user_id")
+}
+
+model enrollments {
+  id          String    @id @db.VarChar(36)
+  student_id  String    @db.VarChar(36)
+  course_id   String    @db.VarChar(36)
+  is_active   Boolean   @default(true)
+  enrolled_at DateTime  @db.Timestamp(6)
+  dropped_at  DateTime? @db.Timestamp(6)
+  courses     courses   @relation(fields: [course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users       users     @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([student_id, course_id])
+  @@index([course_id, is_active], map: "idx_enrollments_course_active")
+  @@index([course_id], map: "idx_enrollments_course_id")
+  @@index([student_id], map: "idx_enrollments_student_id")
+}
+
+model risk_signals {
+  id          String           @id @db.VarChar(36)
+  checkin_id  String           @db.VarChar(36)
+  signal_type risk_signal_type
+  severity    risk_severity
+  confidence  Float            @default(1.0)
+  details     String?
+  weight      Float            @default(0.1)
+  detected_at DateTime         @db.Timestamp(6)
+  checkins    checkins         @relation(fields: [checkin_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([checkin_id], map: "idx_risk_signals_checkin_id")
+  @@index([detected_at], map: "idx_risk_signals_detected_at")
+  @@index([severity], map: "idx_risk_signals_severity")
+  @@index([signal_type], map: "idx_risk_signals_signal_type")
+  @@index([signal_type], map: "idx_risk_signals_type")
+}
+
+model sessions {
+  id                     String         @id @db.VarChar(36)
+  course_id              String         @db.VarChar(36)
+  instructor_id          String?        @db.VarChar(36)
+  name                   String         @db.VarChar(255)
+  session_type           String?        @default("lecture") @db.VarChar(50)
+  description            String?
+  scheduled_start        DateTime       @db.Timestamp(6)
+  scheduled_end          DateTime       @db.Timestamp(6)
+  checkin_opens_at       DateTime       @db.Timestamp(6)
+  checkin_closes_at      DateTime       @db.Timestamp(6)
+  status                 session_status
+  actual_start           DateTime?      @db.Timestamp(6)
+  actual_end             DateTime?      @db.Timestamp(6)
+  venue_latitude         Float?
+  venue_longitude        Float?
+  venue_name             String?        @db.VarChar(255)
+  geofence_radius_meters Float?
+  require_liveness_check Boolean?       @default(true)
+  require_face_match     Boolean?       @default(false)
+  risk_threshold         Float?
+  qr_code_secret         String?        @db.VarChar(64)
+  qr_code_expires_at     DateTime?      @db.Timestamp(6)
+  created_at             DateTime       @db.Timestamp(6)
+  updated_at             DateTime       @db.Timestamp(6)
+  qr_code_enabled        Boolean?       @default(false)
+  checkins               checkins[]
+  courses                courses        @relation(fields: [course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                  users?         @relation(fields: [instructor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([checkin_opens_at, checkin_closes_at], map: "idx_sessions_checkin_window")
+  @@index([course_id], map: "idx_sessions_course_id")
+  @@index([scheduled_start], map: "idx_sessions_scheduled_start")
+  @@index([status], map: "idx_sessions_status")
+  @@index([status, checkin_closes_at], map: "idx_sessions_status_checkin_close")
+}
+
+model users {
+  id                                      String        @id @db.VarChar(36)
+  email                                   String        @unique @db.VarChar(255)
+  full_name                               String        @db.VarChar(255)
+  hashed_password                         String        @db.VarChar(255)
+  role                                    user_role
+  is_active                               Boolean       @default(true)
+  camera_consent                          Boolean?      @default(false)
+  geolocation_consent                     Boolean?      @default(false)
+  face_embedding_hash                     String?       @db.VarChar(64)
+  face_enrolled                           Boolean?      @default(false)
+  created_at                              DateTime      @db.Timestamp(6)
+  updated_at                              DateTime      @db.Timestamp(6)
+  last_login_at                           DateTime?     @db.Timestamp(6)
+  scheduled_deletion_at                   DateTime?     @db.Timestamp(6)
+  audit_logs                              audit_logs[]
+  checkins_checkins_reviewed_by_idTousers checkins[]    @relation("checkins_reviewed_by_idTousers")
+  checkins_checkins_student_idTousers     checkins[]    @relation("checkins_student_idTousers")
+  course_tas                              course_tas[]
+  courses                                 courses[]
+  devices                                 devices[]
+  enrollments                             enrollments[]
+  sessions                                sessions[]
+
+  @@index([email], map: "idx_users_email")
+  @@index([is_active], map: "idx_users_is_active")
+  @@index([role], map: "idx_users_role")
+}
+
+enum audit_action {
+  login_success
+  login_failed
+  logout
+  user_created
+  checkin_attempted
+  checkin_approved
+  checkin_rejected
+  data_exported
+  security_violation
+  user_updated
+  checkin_flagged
+  checkin_appealed
+  checkin_reviewed
+  session_created
+  session_updated
+  session_deleted
+  enrollment_added
+  enrollment_removed
+  device_registered
+  face_enrolled
+}
+
+enum checkin_status {
+  pending
+  approved
+  flagged
+  rejected
+  appealed
+}
+
+enum risk_severity {
+  low
+  medium
+  high
+  critical
+}
+
+enum risk_signal_type {
+  geo_out_of_bounds
+  impossible_travel
+  geo_accuracy_low
+  vpn_detected
+  proxy_detected
+  tor_detected
+  suspicious_ip
+  device_unknown
+  device_emulator
+  device_rooted
+  attestation_failed
+  rapid_succession
+  unusual_time
+  pattern_anomaly
+  liveness_failed
+  liveness_low_confidence
+  deepfake_suspected
+  replay_suspected
+  face_match_failed
+  face_match_low_confidence
+}
+
+enum session_status {
+  scheduled
+  active
+  closed
+  cancelled
+}
+
+enum user_role {
+  student
+  instructor
+  ta
+  admin
+}

@@ -13,6 +13,7 @@ import redis from './services/redis.js';
 import rateLimiter from './services/rateLimiter.js';
 import { MlServices } from './services/ml/index.js';
 import metricsPlugin from './services/metrics.js';
+import prismaPlugin from './services/prisma.js';
 
 const server = fastify({
     ignoreTrailingSlash: true,
@@ -36,6 +37,7 @@ try {
         .register(rateLimiter)
         .register(auth)
         .register(pg)
+        .register(prismaPlugin)
         .register(fastifyFormbody)
         .register(cors)
         .register(controller)

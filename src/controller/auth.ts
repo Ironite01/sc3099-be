@@ -47,33 +47,30 @@ async function authController(fastify: FastifyInstance) {
             keyGenerator: (req: FastifyRequest) => `rl:register:${req.ip}`
         })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
+        const prisma = fastify.prisma;
         const pgClient = await fastify.pg.connect();
-        try {
-            const user = await UserModel.create(pgClient, req.body as any);
+        const user = await UserModel.create(prisma, req.body as any);
 
-            await AuditModel.log(pgClient, {
-                userId: user.id,
-                action: AUDIT_ACTIONS.USER_CREATED,
-                resourceType,
-                resourceId: user.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                success: true,
-                details: { email: user.email, role: user.role }
-            });
-            registrationTotal.inc({ role: user.role });
+        await AuditModel.log(pgClient, {
+            userId: user.id,
+            action: AUDIT_ACTIONS.USER_CREATED,
+            resourceType,
+            resourceId: user.id,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            success: true,
+            details: { email: user.email, role: user.role }
+        });
+        registrationTotal.inc({ role: user.role });
 
-            res.status(201).send({
-                id: user.id,
-                email: user.email,
-                full_name: user.full_name,
-                role: user.role,
-                is_active: user.is_active,
-                created_at: user.created_at
-            });
-        } finally {
-            pgClient.release();
-        }
+        res.status(201).send({
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.role,
+            is_active: user.is_active,
+            created_at: user.created_at
+        });
     });
 
     fastify.post(`${uri}/login`, {
@@ -98,173 +95,162 @@ async function authController(fastify: FastifyInstance) {
             keyGenerator: (req: FastifyRequest) => `rl:login:${req.ip}`
         })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
+        const prisma = fastify.prisma;
         const pgClient = await fastify.pg.connect();
+        const { email, password: passwordClaim }: any = req.body;
+        let user: any;
         try {
-            const { email, password: passwordClaim }: any = req.body;
-            let user: any;
+            user = await UserModel.login(prisma, email, passwordClaim);
+            loginTotal.inc({ status: 'success' });
+
+            await AuditModel.log(pgClient, {
+                userId: user.id,
+                action: AUDIT_ACTIONS.LOGIN_SUCCESS,
+                resourceType,
+                resourceId: user.id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { user_id: user.id, ip: req.ip }
+            });
+        } catch (err) {
+            loginTotal.inc({ status: 'failure' });
+
+            // Check for multiple failed login attempts (brute force detection)
+            const failedAttemptsKey = `failed_login:${req.ip}`;
+            let failedAttempts = 0;
             try {
-                user = await UserModel.login(pgClient, email, passwordClaim);
-                loginTotal.inc({ status: 'success' });
-
-                await AuditModel.log(pgClient, {
-                    userId: user.id,
-                    action: AUDIT_ACTIONS.LOGIN_SUCCESS,
-                    resourceType,
-                    resourceId: user.id,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent'] || '',
-                    success: true,
-                    details: { user_id: user.id, ip: req.ip }
-                });
-            } catch (err) {
-                loginTotal.inc({ status: 'failure' });
-
-                // Check for multiple failed login attempts (brute force detection)
-                const failedAttemptsKey = `failed_login:${req.ip}`;
-                let failedAttempts = 0;
-                try {
-                    const redis = (fastify as any).redis;
-                    if (redis) {
-                        const current = await redis.incr(failedAttemptsKey);
-                        if (current === 1) {
-                            await redis.expire(failedAttemptsKey, 3600); // 1 hour window
-                        }
-                        failedAttempts = current || 0;
-
-                        // Log as security_violation if multiple failures detected
-                        if (failedAttempts >= 5) {
-                            await AuditModel.log(pgClient, {
-                                userId: null,
-                                action: AUDIT_ACTIONS.SECURITY_VIOLATION,
-                                resourceType,
-                                resourceId: email,
-                                ipAddress: req.ip,
-                                userAgent: req.headers['user-agent'] || '',
-                                success: false,
-                                details: { violation_type: 'brute_force_attempt', failed_attempts: failedAttempts, email: email }
-                            });
-                        }
+                const redis = (fastify as any).redis;
+                if (redis) {
+                    const current = await redis.incr(failedAttemptsKey);
+                    if (current === 1) {
+                        await redis.expire(failedAttemptsKey, 3600); // 1 hour window
                     }
-                } catch (redisErr) {
-                    console.error('Failed to check login attempts:', redisErr);
-                }
+                    failedAttempts = current || 0;
 
-                await AuditModel.log(pgClient, {
-                    userId: null,
-                    action: AUDIT_ACTIONS.LOGIN_FAILED,
-                    resourceType,
-                    resourceId: email,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent'] || '',
-                    success: false,
-                    details: { email: email, ip: req.ip, reason: 'invalid_credentials' }
-                });
-                throw err;
+                    // Log as security_violation if multiple failures detected
+                    if (failedAttempts >= 5) {
+                        await AuditModel.log(pgClient, {
+                            userId: null,
+                            action: AUDIT_ACTIONS.SECURITY_VIOLATION,
+                            resourceType,
+                            resourceId: email,
+                            ipAddress: req.ip,
+                            userAgent: req.headers['user-agent'] || '',
+                            success: false,
+                            details: { violation_type: 'brute_force_attempt', failed_attempts: failedAttempts, email: email }
+                        });
+                    }
+                }
+            } catch (redisErr) {
+                console.error('Failed to check login attempts:', redisErr);
             }
 
-            const accessToken = fastify.jwt.sign(
-                { sub: user.id, email: user.email, role: user.role }, { expiresIn: ACCESS_TOKEN_TTL }
-            );
-            const refreshToken = fastify.jwt.sign(
-                { sub: user.id, type: 'refresh' }, { expiresIn: REFRESH_TOKEN_TTL }
-            );
-
-            res.setCookie('access_token', accessToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-                sameSite: 'strict',
-                path: '/',
-                maxAge: ACCESS_TOKEN_TTL
+            await AuditModel.log(pgClient, {
+                userId: null,
+                action: AUDIT_ACTIONS.LOGIN_FAILED,
+                resourceType,
+                resourceId: email,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: false,
+                details: { email: email, ip: req.ip, reason: 'invalid_credentials' }
             });
-            res.setCookie('refresh_token', refreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                path: '/',
-                maxAge: REFRESH_TOKEN_TTL
-            });
-
-            res.status(200).send({
-                access_token: accessToken,
-                refresh_token: refreshToken,
-                token_type: "bearer",
-                user
-            });
-        } finally {
-            pgClient.release();
+            throw err;
         }
+
+        const accessToken = fastify.jwt.sign(
+            { sub: user.id, email: user.email, role: user.role }, { expiresIn: ACCESS_TOKEN_TTL }
+        );
+        const refreshToken = fastify.jwt.sign(
+            { sub: user.id, type: 'refresh' }, { expiresIn: REFRESH_TOKEN_TTL }
+        );
+
+        res.setCookie('access_token', accessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+            sameSite: 'strict',
+            path: '/',
+            maxAge: ACCESS_TOKEN_TTL
+        });
+        res.setCookie('refresh_token', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            path: '/',
+            maxAge: REFRESH_TOKEN_TTL
+        });
+
+        res.status(200).send({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            token_type: "bearer",
+            user
+        });
     });
 
     fastify.post(`${uri}/refresh`, {
         preHandler: [fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const refresh_token: any = req.cookies.refresh_token;
-            if (!refresh_token) {
-                throw new UnauthorizedError();
-            }
-
-            let decoded: any;
-            try {
-                decoded = fastify.jwt.verify(refresh_token);
-            } catch (_err: any) {
-                throw new UnauthorizedError();
-            }
-            if (decoded.type !== 'refresh') {
-                throw new UnauthorizedError();
-            }
-
-            const user = await UserModel.getById(pgClient, decoded.sub);
-
-            const accessToken = fastify.jwt.sign(
-                { sub: user.id, email: user.email, role: user.role },
-                { expiresIn: ACCESS_TOKEN_TTL }
-            );
-            const newRefreshToken = fastify.jwt.sign(
-                { sub: user.id, type: 'refresh' },
-                { expiresIn: REFRESH_TOKEN_TTL }
-            );
-
-            res.setCookie('access_token', accessToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-                sameSite: 'strict',
-                path: '/',
-                maxAge: ACCESS_TOKEN_TTL
-            });
-            res.setCookie('refresh_token', newRefreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                path: '/',
-                maxAge: REFRESH_TOKEN_TTL
-            });
-
-            res.status(200).send({ refresh_token: newRefreshToken, access_token: accessToken, user });
-        } finally {
-            pgClient.release();
+        const prisma = fastify.prisma;
+        const refresh_token: any = req.cookies.refresh_token;
+        if (!refresh_token) {
+            throw new UnauthorizedError();
         }
+
+        let decoded: any;
+        try {
+            decoded = fastify.jwt.verify(refresh_token);
+        } catch (_err: any) {
+            throw new UnauthorizedError();
+        }
+        if (decoded.type !== 'refresh') {
+            throw new UnauthorizedError();
+        }
+
+        const user = await UserModel.getById(prisma, decoded.sub);
+
+        const accessToken = fastify.jwt.sign(
+            { sub: user.id, email: user.email, role: user.role },
+            { expiresIn: ACCESS_TOKEN_TTL }
+        );
+        const newRefreshToken = fastify.jwt.sign(
+            { sub: user.id, type: 'refresh' },
+            { expiresIn: REFRESH_TOKEN_TTL }
+        );
+
+        res.setCookie('access_token', accessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+            sameSite: 'strict',
+            path: '/',
+            maxAge: ACCESS_TOKEN_TTL
+        });
+        res.setCookie('refresh_token', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            path: '/',
+            maxAge: REFRESH_TOKEN_TTL
+        });
+
+        res.status(200).send({ refresh_token: newRefreshToken, access_token: accessToken, user });
     });
 
     // Extra endpoint
     fastify.post(`${uri}/logout`, { preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
-        try {
-            const userId = (req.user as any)?.sub;
-            if (userId) {
-                await AuditModel.log(pgClient, {
-                    userId: userId,
-                    action: AUDIT_ACTIONS.LOGOUT,
-                    resourceType,
-                    resourceId: userId,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent'] || '',
-                    success: true
-                });
-            }
-        } finally {
-            pgClient.release();
+        const userId = (req.user as any)?.sub;
+        if (userId) {
+            await AuditModel.log(pgClient, {
+                userId: userId,
+                action: AUDIT_ACTIONS.LOGOUT,
+                resourceType,
+                resourceId: userId,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true
+            });
         }
 
         res.clearCookie('access_token', {
