@@ -10,24 +10,20 @@ function enrollmentController(fastify: FastifyInstance) {
     const resourceType = 'enrollment';
 
     fastify.get(`${uri}/my-enrollments`, { preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const studentId = (req.user as any)?.sub;
-            const enrollments = await EnrollmentModel.getEnrollmentsByStudentId(pgClient, studentId);
+        const prisma = await fastify.prisma;
+        const studentId = (req.user as any)?.sub;
+        const enrollments = await EnrollmentModel.getEnrollmentsByStudentId(prisma, studentId);
 
-            res.status(200).send(enrollments.map(enrollment => ({
-                id: enrollment.id,
-                course_id: enrollment.course_id,
-                course_code: enrollment.course_code,
-                course_name: enrollment.course_name,
-                semester: enrollment.semester,
-                instructor_name: enrollment.instructor_name,
-                enrolled_at: enrollment.enrolled_at,
-                is_active: enrollment.is_active
-            })));
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send(enrollments.map((enrollment: any) => ({
+            id: enrollment.id,
+            course_id: enrollment.course_id,
+            course_code: enrollment.course_code,
+            course_name: enrollment.course_name,
+            semester: enrollment.semester,
+            instructor_name: enrollment.instructor_name,
+            enrolled_at: enrollment.enrolled_at,
+            is_active: enrollment.is_active
+        })));
     });
 
     fastify.get(`${uri}/course/:courseId`,
@@ -51,30 +47,26 @@ function enrollmentController(fastify: FastifyInstance) {
             preHandler: [fastify.authorize(2), fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
-            const pgClient = await fastify.pg.connect();
-            try {
-                const user = req.user as { sub: string; role: USER_ROLE_TYPES };
-                const courseId = (req.params as { courseId: string }).courseId;
-                const results = await EnrollmentModel.getStudentsByCourseEnrollment(pgClient, { id: user.sub, role: user.role }, courseId, req.query as { is_active?: boolean, search?: string });
-                const students = results.students;
+            const prisma = await fastify.prisma;
+            const user = req.user as { sub: string; role: USER_ROLE_TYPES };
+            const courseId = (req.params as { courseId: string }).courseId;
+            const results = await EnrollmentModel.getStudentsByCourseEnrollment(prisma, { id: user.sub, role: user.role }, courseId, req.query as { is_active?: boolean, search?: string });
+            const students = results.students;
 
-                res.status(200).send({
-                    course_id: results.course_id,
-                    course_code: results.course_code,
-                    total_enrolled: results.total_enrolled,
-                    students: students.map(student => ({
-                        id: student.id,
-                        student_id: student.student_id,
-                        student_email: student.student_email,
-                        student_name: student.student_name,
-                        enrolled_at: student.enrolled_at,
-                        is_active: student.is_active,
-                        face_enrolled: student.face_enrolled
-                    }))
-                });
-            } finally {
-                pgClient.release();
-            }
+            res.status(200).send({
+                course_id: results.course_id,
+                course_code: results.course_code,
+                total_enrolled: results.total_enrolled,
+                students: students.map(student => ({
+                    id: student.id,
+                    student_id: student.student_id,
+                    student_email: student.student_email,
+                    student_name: student.student_name,
+                    enrolled_at: student.enrolled_at,
+                    is_active: student.is_active,
+                    face_enrolled: student.face_enrolled
+                }))
+            });
         });
 
     fastify.post(`${uri}/`, {
@@ -90,35 +82,31 @@ function enrollmentController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const userId = (req.user as any)?.sub;
-            const userRole = (req.user as any)?.role;
-            const { student_id, course_id } = req.body as { student_id: string, course_id: string };
+        const prisma = await fastify.prisma;
+        const userId = (req.user as any)?.sub;
+        const userRole = (req.user as any)?.role;
+        const { student_id, course_id } = req.body as { student_id: string, course_id: string };
 
-            const enrollment = await EnrollmentModel.create(pgClient, { id: userId, role: userRole }, { studentId: student_id, courseId: course_id });
+        const enrollment = await EnrollmentModel.create(prisma, { id: userId, role: userRole }, { studentId: student_id, courseId: course_id });
 
-            await AuditModel.log(pgClient, {
-                userId: userId,
-                action: AUDIT_ACTIONS.ENROLLMENT_ADDED,
-                resourceType,
-                resourceId: enrollment.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                success: true,
-                details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
-            });
+        await AuditModel.log(prisma, {
+            userId: userId,
+            action: AUDIT_ACTIONS.ENROLLMENT_ADDED,
+            resourceType,
+            resourceId: enrollment.id!,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            success: true,
+            details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
+        });
 
-            res.status(201).send({
-                id: enrollment.id,
-                student_id: enrollment.student_id,
-                course_id: enrollment.course_id,
-                enrolled_at: enrollment.enrolled_at,
-                is_active: enrollment.is_active
-            });
-        } finally {
-            pgClient.release();
-        }
+        res.status(201).send({
+            id: enrollment.id,
+            student_id: enrollment.student_id,
+            course_id: enrollment.course_id,
+            enrolled_at: enrollment.enrolled_at,
+            is_active: enrollment.is_active
+        });
     });
 
     fastify.post(`${uri}/bulk`, {
@@ -139,10 +127,11 @@ function enrollmentController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
+        const prisma = await fastify.prisma;
         const userId = (req.user as any)?.sub;
         const userRole = (req.user as any)?.role;
         const { course_id, student_emails, create_accounts = false } = req.body as any;
-        const results = await EnrollmentModel.bulkCreate(fastify.pg.transact, { id: userId, role: userRole }, course_id, student_emails, create_accounts);
+        const results = await EnrollmentModel.bulkCreate(prisma, { id: userId, role: userRole }, course_id, student_emails, create_accounts);
         res.status(200).send({
             course_id,
             enrolled: results.enrolled,
@@ -165,29 +154,25 @@ function enrollmentController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const user = req.user as { sub: string; role: USER_ROLE_TYPES };
-            const enrollmentId = (req.params as { enrollment_id: string }).enrollment_id;
-            const enrollment = await EnrollmentModel.delete(pgClient, { id: user.sub, role: user.role }, enrollmentId);
+        const prisma = await fastify.prisma;
+        const user = req.user as { sub: string; role: USER_ROLE_TYPES };
+        const enrollmentId = (req.params as { enrollment_id: string }).enrollment_id;
+        const enrollment = await EnrollmentModel.delete(prisma, { id: user.sub, role: user.role }, enrollmentId);
 
-            if (enrollment) {
-                await AuditModel.log(pgClient, {
-                    userId: user.sub,
-                    action: AUDIT_ACTIONS.ENROLLMENT_REMOVED,
-                    resourceType,
-                    resourceId: enrollmentId,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent'] || '',
-                    success: true,
-                    details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
-                });
-            }
-
-            res.status(204).send();
-        } finally {
-            pgClient.release();
+        if (enrollment) {
+            await AuditModel.log(prisma, {
+                userId: user.sub,
+                action: AUDIT_ACTIONS.ENROLLMENT_REMOVED,
+                resourceType,
+                resourceId: enrollmentId,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
+            });
         }
+
+        res.status(204).send();
     });
 }
 

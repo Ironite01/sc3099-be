@@ -150,6 +150,26 @@ export const DeviceModel = {
             }
         });
     },
+    getCurrentActiveDevice: async (prisma: PrismaClient, userId: string) => {
+        try {
+            return await prisma.devices.findFirstOrThrow({
+                where: {
+                    user_id: userId,
+                    is_active: true
+                },
+                orderBy: { last_seen_at: 'desc' },
+                select: {
+                    id: true
+                }
+            });
+        } catch (err: any) {
+            if (err.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError('No active device found for this user');
+            }
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
     getAllByUserId: async (prisma: PrismaClient, userId: string, isActiveOnly = false) => {
         try {
             return await prisma.devices.findMany({

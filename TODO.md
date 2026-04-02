@@ -32,7 +32,6 @@
 #### POST /sessions/✅
 #### PATCH /sessions/{session_id}✅
 #### DELETE /sessions/{session_id}✅
-
 qr not tested
 
 ### Check-ins
@@ -62,11 +61,11 @@ qr not tested
 
 ### Enrollments
 
-#### GET /enrollments/my-enrollments
-#### GET /enrollments/course/{course_id}
-#### POST /enrollments/
-#### POST /enrollments/bulk
-#### DELETE /enrollments/{enrollment_id}
+#### GET /enrollments/my-enrollments✅
+#### GET /enrollments/course/{course_id}✅
+#### POST /enrollments/✅
+#### POST /enrollments/bulk✅
+#### DELETE /enrollments/{enrollment_id}✅
 
 ### Audit Logs
 

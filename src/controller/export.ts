@@ -90,7 +90,7 @@ async function exportController(fastify: FastifyInstance) {
             res.header('Content-Type', 'text/csv');
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.csv"`);
 
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(await fastify.prisma, {
                 userId: (req.user as any)?.sub,
                 action: AUDIT_ACTIONS.DATA_EXPORTED,
                 resourceType,
@@ -168,7 +168,7 @@ async function exportController(fastify: FastifyInstance) {
             res.header('Content-Type', 'text/csv');
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.csv"`);
 
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(await fastify.prisma, {
                 userId: (req.user as any)?.sub,
                 action: AUDIT_ACTIONS.DATA_EXPORTED,
                 resourceType,

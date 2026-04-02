@@ -69,17 +69,6 @@ model checkins {
   @@index([student_id], map: "idx_checkins_student_id")
 }
 
-model course_tas {
-  course_id   String
-  ta_id       String
-  assigned_at DateTime @default(now()) @db.Timestamptz(6)
-  courses     courses  @relation(fields: [course_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users       users    @relation(fields: [ta_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@id([course_id, ta_id])
-  @@index([ta_id], map: "idx_course_tas_ta_id")
-}
-
 model courses {
   id                       String        @id @db.VarChar(36)
   code                     String        @unique @db.VarChar(20)
@@ -96,9 +85,8 @@ model courses {
   risk_threshold           Float?        @default(0.5)
   created_at               DateTime      @db.Timestamp(6)
   updated_at               DateTime      @db.Timestamp(6)
-  instructor_id            String        @db.VarChar
-  course_tas               course_tas[]
-  users                    users         @relation(fields: [instructor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  instructor_id            String?
+  users                    users?        @relation(fields: [instructor_id], references: [id], onUpdate: NoAction)
   enrollments              enrollments[]
   sessions                 sessions[]
 
@@ -153,7 +141,6 @@ model enrollments {
   users       users     @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([student_id, course_id])
-  @@index([course_id, is_active], map: "idx_enrollments_course_active")
   @@index([course_id], map: "idx_enrollments_course_id")
   @@index([student_id], map: "idx_enrollments_student_id")
 }
@@ -172,7 +159,6 @@ model risk_signals {
   @@index([checkin_id], map: "idx_risk_signals_checkin_id")
   @@index([detected_at], map: "idx_risk_signals_detected_at")
   @@index([severity], map: "idx_risk_signals_severity")
-  @@index([signal_type], map: "idx_risk_signals_signal_type")
   @@index([signal_type], map: "idx_risk_signals_type")
 }
 
@@ -210,7 +196,7 @@ model sessions {
   @@index([course_id], map: "idx_sessions_course_id")
   @@index([scheduled_start], map: "idx_sessions_scheduled_start")
   @@index([status], map: "idx_sessions_status")
-  @@index([status, checkin_closes_at], map: "idx_sessions_status_checkin_close")
+  @@index([instructor_id], map: "idx_sessions_instructor_id")
 }
 
 model users {
@@ -231,7 +217,6 @@ model users {
   audit_logs                              audit_logs[]
   checkins_checkins_reviewed_by_idTousers checkins[]    @relation("checkins_reviewed_by_idTousers")
   checkins_checkins_student_idTousers     checkins[]    @relation("checkins_student_idTousers")
-  course_tas                              course_tas[]
   courses                                 courses[]
   devices                                 devices[]
   enrollments                             enrollments[]

@@ -1,6 +1,8 @@
 import type { PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { AppError, BadRequestError } from './error.js';
 import { DeviceModel } from './device.js';
+import type { PrismaClient } from '../generated/prisma/client.js';
 
 export enum AUDIT_ACTIONS {
     LOGIN_SUCCESS = 'login_success',
@@ -168,7 +170,7 @@ export const AuditModel = {
         }
     },
     log: async (
-        pgClient: PoolClient,
+        prisma: PrismaClient,
         data:
             {
                 userId: string | null,
@@ -184,19 +186,28 @@ export const AuditModel = {
         try {
             let { userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, details } = data;
             if (!deviceId && action !== AUDIT_ACTIONS.USER_CREATED && userId) {
-                const devices = await DeviceModel.getByUserId(pgClient, userId);
-                if (devices.length > 0) {
-                    deviceId = devices[0]!.id;
-                } else {
+                try {
+                    const devices = await DeviceModel.getCurrentActiveDevice(prisma, userId);
+                    deviceId = devices.id;
+                } catch (err) {
                     console.error(`No device found for user with id ${userId} during audit logging`);
                 }
             }
-            await pgClient.query(
-                `INSERT INTO audit_logs 
-                    (id, user_id, action, resource_type, resource_id, ip_address, user_agent, device_id, success, details, timestamp)
-                 VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-                [userId || null, action, resourceType, resourceId, ipAddress, userAgent, deviceId || null, success, JSON.stringify(details || {})]
-            );
+            await prisma.audit_logs.create({
+                data: {
+                    id: randomUUID(),
+                    user_id: userId || null,
+                    action: action,
+                    resource_type: resourceType,
+                    resource_id: resourceId,
+                    ip_address: ipAddress,
+                    user_agent: userAgent,
+                    device_id: deviceId || null,
+                    success: success,
+                    details: JSON.stringify(details || {}),
+                    timestamp: new Date()
+                }
+            });
         } catch (error) {
             console.error('Failed to insert audit log:', error);
         }

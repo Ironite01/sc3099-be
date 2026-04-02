@@ -1,206 +1,209 @@
-import type { PoolClient } from "pg";
+import type { PrismaClient, enrollments as Enrollment } from '../generated/prisma/client.js';
 import { CourseModel } from "./course.js";
-import { AppError, BadRequestError, NotFoundError } from "./error.js";
+import { AppError, BadRequestError, ForbiddenError, NotFoundError } from "./error.js";
 import { USER_ROLE_TYPES, UserModel } from "./user.js";
+import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
 import extractNameFromEmail from "../helpers/extractNameFromEmail.js";
+import { randomUUID } from 'node:crypto';
 
 type EnrollmentActor = {
     id: string;
     role: USER_ROLE_TYPES;
 };
 
-async function assertInstructorOwnsCourse(pgClient: any, courseId: string, userId: string) {
-    const ownershipResult = await pgClient.query(
-        `SELECT 1
-         FROM courses
-         WHERE id = $1 AND instructor_id = $2`,
-        [courseId, userId]
-    );
-
-    if (ownershipResult.rowCount === 0) {
-        throw new NotFoundError('Course not found');
-    }
-}
-
-async function assertCanViewCourseEnrollments(pgClient: any, actor: EnrollmentActor, courseId: string) {
-    const courseResult = await pgClient.query(
-        `SELECT id, code, instructor_id
-         FROM courses
-         WHERE id = $1`,
-        [courseId]
-    );
-
-    if (courseResult.rowCount === 0) {
-        throw new NotFoundError('Course not found');
-    }
-
-    const course = courseResult.rows[0] as { id: string; code: string; instructor_id: string | null };
-
-    if (actor.role === USER_ROLE_TYPES.ADMIN) {
-        return course;
-    }
-
-    if (course.instructor_id === actor.id) {
-        return course;
-    }
-
-    if (actor.role === USER_ROLE_TYPES.TA) {
-        const taAccess = await pgClient.query(
-            `SELECT 1
-             FROM course_tas
-             WHERE course_id = $1 AND ta_id = $2
-             LIMIT 1`,
-            [courseId, actor.id]
-        );
-
-        if (taAccess.rowCount > 0) {
-            return course;
-        }
-    }
-
-    throw new NotFoundError('Course not found');
-}
-
-async function assertStudentCanBeEnrolled(pgClient: any, studentId: string) {
-    const studentResult = await pgClient.query(
-        `SELECT id, role, is_active
-         FROM users
-         WHERE id = $1`,
-        [studentId]
-    );
-
-    if (studentResult.rowCount === 0) {
-        throw new NotFoundError('Student not found');
-    }
-
-    const student = studentResult.rows[0] as { role: USER_ROLE_TYPES; is_active: boolean };
-    if (student.role !== USER_ROLE_TYPES.STUDENT) {
-        throw new BadRequestError('User is not a student');
-    }
-
-    if (!student.is_active) {
-        throw new BadRequestError('Student account is inactive');
-    }
-}
-
-export type Enrollment = {
-    id: string;
-    student_id: string;
-    course_id: string;
-    is_active: boolean;
-    enrolled_at: Date;
-    dropped_at?: Date;
-}
+export type { Enrollment };
 
 export const EnrollmentModel = {
-    getEnrollmentsByStudentId: async (pgClient: any, studentId: string): Promise<(Enrollment & { instructor_name: string, course_code: string, course_name: string, semester: string })[]> => {
+    getEnrollmentsByStudentId: async (prisma: PrismaClient, studentId: string) => {
         try {
             if (!studentId) {
                 throw new NotFoundError();
             }
-
             // We do not consider if course and enrollments are active or not
-            const { rows } = await pgClient.query(
-                `SELECT c.name as course_name, c.code as course_code, c.semester, c.id as course_id, u.full_name as instructor_name, e.enrolled_at, e.id, e.is_active
-                 FROM enrollments e
-                 JOIN courses c ON c.id = e.course_id
-                 JOIN users u ON u.id = c.instructor_id
-                 WHERE e.student_id = $1
-                 ORDER BY e.enrolled_at DESC`,
-                [studentId]
-            );
+            const enrollments = await prisma.enrollments.findMany({
+                where: { student_id: studentId },
+                select: {
+                    id: true,
+                    student_id: true,
+                    course_id: true,
+                    is_active: true,
+                    enrolled_at: true,
+                    dropped_at: true,
+                    courses: {
+                        select: {
+                            code: true,
+                            name: true,
+                            semester: true,
+                            users: {
+                                select: {
+                                    full_name: true
+                                }
+                            }
+                        }
+                    }
+                },
+                orderBy: { enrolled_at: 'desc' }
+            });
 
-            return rows as (Enrollment & { instructor_name: string, course_code: string, course_name: string, semester: string })[];
+            const data = enrollments.map(e => ({
+                ...e,
+                course_code: e.courses?.code,
+                course_name: e.courses?.name,
+                semester: e.courses?.semester,
+                instructor_name: e.courses?.users?.full_name,
+            })) as any;
+
+            delete data.courses;
+            return data;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getStudentsByCourseEnrollment: async (pgClient: any, actor: EnrollmentActor, courseId: string, { is_active = true, search }: { is_active?: boolean, search?: string }): Promise<{ course_id: string; course_code: string; total_enrolled: number; students: (Enrollment & { student_name: string, student_email: string, face_enrolled: boolean })[] }> => {
+    getStudentsByCourseEnrollment: async (prisma: PrismaClient, actor: EnrollmentActor, courseId: string, { is_active = true, search }: { is_active?: boolean, search?: string }): Promise<{ course_id: string; course_code: string; total_enrolled: number; students: (Enrollment & { student_name?: string, student_email?: string, face_enrolled?: boolean })[] }> => {
         try {
             if (!courseId || !actor?.id) {
                 throw new NotFoundError();
             }
 
-            const course = await assertCanViewCourseEnrollments(pgClient, actor, courseId);
+            let course;
+            try {
+                course = await CourseModel.findById(prisma, courseId);
+            } catch (err) {
+                throw new NotFoundError('Course not found');
+            }
+            if (actor.role === USER_ROLE_TYPES.INSTRUCTOR && course.instructor_id !== actor.id) {
+                throw new NotFoundError();
+            }
 
-            const totalEnrolledResult = await pgClient.query(
-                `SELECT COUNT(*) FROM enrollments e
-     WHERE e.course_id = $1 AND e.is_active = $2`,
-                [courseId, is_active]
-            );
-            const totalEnrolled = parseInt(totalEnrolledResult.rows[0].count || "0");
+            const enrollments = await prisma.enrollments.findMany({
+                where: {
+                    course_id: courseId,
+                    is_active,
+                    ...(search && {
+                        users: {
+                            OR: [
+                                { full_name: { contains: search, mode: 'insensitive' } },
+                                { email: { contains: search, mode: 'insensitive' } }
+                            ]
+                        }
+                    })
+                },
+                select: {
+                    id: true,
+                    student_id: true,
+                    course_id: true,
+                    is_active: true,
+                    enrolled_at: true,
+                    dropped_at: true,
+                    users: {
+                        select: {
+                            full_name: true,
+                            email: true,
+                            face_enrolled: true
+                        }
+                    }
+                }
+            });
 
-            const searchQuery = search ? `%${search}%` : null;
-            const values = searchQuery ? [courseId, is_active, searchQuery] : [courseId, is_active];
+            const totalEnrolled = await prisma.enrollments.count({
+                where: {
+                    course_id: courseId,
+                    is_active
+                }
+            });
 
-            const { rows } = await pgClient.query(
-                `SELECT e.id, e.student_id, e.course_id, e.is_active, e.enrolled_at, u.full_name as student_name, u.email as student_email, u.face_enrolled as face_enrolled, c.code as course_code
-     FROM enrollments e
-     JOIN users u ON e.student_id = u.id
-     JOIN courses c ON e.course_id = c.id
-     WHERE e.course_id = $1 AND e.is_active = $2 ${searchQuery ? 'AND (u.full_name ILIKE $3 OR u.email ILIKE $3)' : ''}`,
-                values
-            );
+            const parsedEnrollments = enrollments.map(e => ({
+                ...e,
+                student_name: e.users?.full_name,
+                student_email: e.users?.email,
+                face_enrolled: e.users?.face_enrolled,
+            })) as any;
+            delete parsedEnrollments.users;
 
             return {
                 course_id: courseId,
                 course_code: course.code,
                 total_enrolled: totalEnrolled,
-                students: rows as (Enrollment & { student_name: string, student_email: string, face_enrolled: boolean })[] || []
+                students: parsedEnrollments
             };
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    create: async (pgClient: any, user: EnrollmentActor, payload: { studentId: string, courseId: string }): Promise<Enrollment> => {
+    create: async (prisma: PrismaClient, user: EnrollmentActor, payload: { studentId: string, courseId: string }): Promise<Partial<Enrollment>> => {
         try {
             const { studentId, courseId } = payload;
             if (!studentId || !courseId) {
                 throw new NotFoundError();
             }
 
-            const isCourseActiveAndValid = await CourseModel.isCourseActiveAndValid(pgClient, courseId);
+            const isCourseActiveAndValid =
+                user.role === USER_ROLE_TYPES.INSTRUCTOR ?
+                    await CourseModel.isCourseActiveAndValid(prisma, courseId, user.id) :
+                    await CourseModel.isCourseActiveAndValid(prisma, courseId);
+
             if (!isCourseActiveAndValid) {
                 throw new NotFoundError('Course not found or is not active');
             }
 
-            await assertStudentCanBeEnrolled(pgClient, studentId);
-
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                await assertInstructorOwnsCourse(pgClient, courseId, user.id);
+            // Check if student account is active and has student role
+            try {
+                const student = await UserModel.getById(prisma, studentId);
+                if (student.role !== USER_ROLE_TYPES.STUDENT) {
+                    throw new ForbiddenError('User is not a student');
+                }
+                if (!student.is_active) {
+                    throw new ForbiddenError('Student account is not active');
+                }
+            } catch (err) {
+                throw new ForbiddenError('Student account is not valid');
             }
 
-            const existingEnrollmentResult = await pgClient.query(
-                `SELECT 1 FROM enrollments WHERE student_id = $1 AND course_id = $2 AND is_active = true`,
-                [studentId, courseId]
-            );
-            if (existingEnrollmentResult.rowCount > 0) {
+            const existingEnrollment = await prisma.enrollments.findFirst({
+                where: {
+                    student_id: studentId,
+                    course_id: courseId,
+                    is_active: true
+                }
+            });
+
+            if (existingEnrollment) {
                 throw new BadRequestError('Student is already enrolled in this course');
             }
 
-            const { rows } = await pgClient.query(
-                `INSERT INTO enrollments (student_id, course_id, is_active, enrolled_at) VALUES ($1, $2, true, NOW()) RETURNING id, student_id, course_id, is_active, enrolled_at`,
-                [studentId, courseId]
-            );
-
-            return rows[0] as Enrollment;
+            return await prisma.enrollments.create({
+                data: {
+                    id: randomUUID(),
+                    student_id: studentId,
+                    course_id: courseId,
+                    is_active: true,
+                    enrolled_at: new Date()
+                },
+                select: {
+                    id: true,
+                    student_id: true,
+                    course_id: true,
+                    is_active: true,
+                    enrolled_at: true
+                }
+            });
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    bulkCreate: async (transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>, actor: EnrollmentActor, courseId: string, studentEmails: string[], shouldCreateAccs: boolean) => {
+    bulkCreate: async (prisma: PrismaClient, actor: EnrollmentActor, courseId: string, studentEmails: string[], shouldCreateAccs: boolean) => {
         try {
-            return await transact(async (pgClient) => {
-                const isCourseActiveAndValid = await CourseModel.isCourseActiveAndValid(pgClient, courseId);
+            return await prisma.$transaction(async (tx) => {
+                const isCourseActiveAndValid =
+                    actor.role === USER_ROLE_TYPES.INSTRUCTOR ?
+                        await CourseModel.isCourseActiveAndValid(tx as any, courseId, actor.id) :
+                        await CourseModel.isCourseActiveAndValid(tx as any, courseId);
+
                 if (!isCourseActiveAndValid) {
                     throw new NotFoundError('Course not found or is not active');
-                }
-
-                if (actor.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                    await assertInstructorOwnsCourse(pgClient, courseId, actor.id);
                 }
 
                 let not_found = 0;
@@ -212,143 +215,101 @@ export const EnrollmentModel = {
                 };
 
                 const originalEmails = [...studentEmails];
+                const existingUsers = await UserModel.getUsersByEmail(tx as any, studentEmails);
+                const existingEmails = new Set(existingUsers.map(u => u.email));
+
+                let usersToProcess = existingUsers;
 
                 if (shouldCreateAccs) {
-                    const existingUsers = await UserModel.getUsersByEmail(pgClient, studentEmails);
-                    const existingEmails = new Set(existingUsers.map(user => user.email));
                     const missingEmails = studentEmails.filter(email => !existingEmails.has(email));
 
-                    const createResult = missingEmails.length > 0
-                        ? await UserModel.createMultipleUsers(pgClient, missingEmails.map(email => ({
+                    if (missingEmails.length > 0) {
+                        const newUsers = UserModel.createMultipleUsers(tx as any, missingEmails.map(email => ({
                             email,
                             full_name: extractNameFromEmail(email),
                             role: USER_ROLE_TYPES.STUDENT
-                        })))
-                        : [];
+                        })));
 
-                    created = createResult.length;
+                        created = (await newUsers).length;
 
-                    const createdEmails = createResult.map(u => u.email);
-                    missingEmails.forEach(email => {
-                        if (!createdEmails.includes(email)) {
-                            setDetail(email, 'not_found');
-                            not_found++;
-                        }
-                    });
+                        const newlyCreated = await tx.users.findMany({
+                            where: { email: { in: missingEmails } }
+                        });
 
-                    const combinedUsers = [...existingUsers, ...createResult];
-                    const filteredOnlyActiveUser = combinedUsers.filter(u => {
-                        if (!u.is_active) {
-                            setDetail(u.email, 'inactive');
-                        }
-                        return u.is_active;
-                    });
-
-                    const filteredByRole = filteredOnlyActiveUser.filter(u => {
-                        if (u.role !== USER_ROLE_TYPES.STUDENT) {
-                            setDetail(u.email, 'not_student');
-                            return false;
-                        }
-                        return true;
-                    });
-
-                    const existingUserEmails = filteredByRole.map(u => u.email);
-
-                    studentEmails = studentEmails.filter(e => existingUserEmails.includes(e));
-                } else {
-                    const existingUsers = await UserModel.getUsersByEmail(pgClient, studentEmails);
-
-                    const filteredOnlyActiveUser = existingUsers.filter(u => {
-                        if (!u.is_active) {
-                            setDetail(u.email, 'inactive');
-                        }
-                        return u.is_active;
-                    });
-
-                    const filteredByRole = filteredOnlyActiveUser.filter(u => {
-                        if (u.role !== USER_ROLE_TYPES.STUDENT) {
-                            setDetail(u.email, 'not_student');
-                            return false;
-                        }
-                        return true;
-                    });
-
-                    const existingUserEmails = filteredByRole.map(u => u.email);
-
-                    studentEmails = studentEmails.filter(e => {
-                        if (!existingUserEmails.includes(e)) {
-                            setDetail(e, 'not_found');
-                            not_found++;
-                            return false;
-                        }
-                        return true;
-                    });
+                        usersToProcess = [...existingUsers, ...newlyCreated];
+                    }
                 }
 
-                const activeEnrollmentResult = await pgClient.query(
-                    `SELECT u.email
-                     FROM enrollments e
-                     JOIN users u ON u.id = e.student_id
-                     WHERE e.course_id = $1
-                       AND e.is_active = TRUE
-                       AND u.email = ANY($2)`,
-                    [courseId, studentEmails]
+                // Filter valid users
+                const validUsers = usersToProcess.filter(u => {
+                    if (!u.is_active) {
+                        setDetail(u.email, 'inactive');
+                        return false;
+                    }
+                    if (u.role !== USER_ROLE_TYPES.STUDENT) {
+                        setDetail(u.email, 'not_student');
+                        return false;
+                    }
+                    return true;
+                });
+
+                const validEmails = validUsers.map(u => u.email);
+                const emailsNotFound = studentEmails.filter(e => !validEmails.includes(e) && !detailByEmail.has(e));
+                emailsNotFound.forEach(email => {
+                    setDetail(email, 'not_found');
+                    not_found++;
+                });
+
+                // Check existing enrollments
+                const existingEnrollments = await tx.enrollments.findMany({
+                    where: {
+                        course_id: courseId,
+                        is_active: true,
+                        users: {
+                            email: { in: validEmails }
+                        }
+                    },
+                    select: {
+                        users: { select: { email: true } }
+                    }
+                });
+
+                const alreadyEnrolledEmails = new Set(
+                    existingEnrollments.map(e => e.users?.email).filter(Boolean)
                 );
 
-                const alreadyEnrolledEmails = new Set<string>(
-                    activeEnrollmentResult.rows.map((row: { email: string }) => row.email)
-                );
+                const emailsToEnroll = validEmails.filter(email => !alreadyEnrolledEmails.has(email));
 
-                const studentIdByEmailResult = await pgClient.query(
-                    `SELECT id, email
-                     FROM users
-                     WHERE email = ANY($1)
-                       AND is_active = TRUE
-                       AND role = $2`,
-                    [studentEmails, USER_ROLE_TYPES.STUDENT]
-                );
-
-                const emailByStudentId = new Map<string, string>(
-                    studentIdByEmailResult.rows.map((row: { id: string; email: string }) => [row.id, row.email])
-                );
-
-                const emailsToEnroll = studentEmails.filter(email => !alreadyEnrolledEmails.has(email));
-
+                // Enroll students
                 let enrolled = 0;
                 if (emailsToEnroll.length > 0) {
-                    const { rows } = await pgClient.query(
-                        `INSERT INTO enrollments (id, student_id, course_id, is_active, enrolled_at)
-                            SELECT gen_random_uuid()::text, u.id, $1, TRUE, NOW()
-                            FROM users u
-                            WHERE u.email = ANY($2) AND u.is_active = TRUE AND u.role = $3
-                        ON CONFLICT (student_id, course_id)
-                        DO UPDATE SET is_active = TRUE, dropped_at = NULL
-                        RETURNING id, student_id`,
-                        [courseId, emailsToEnroll, USER_ROLE_TYPES.STUDENT]
-                    );
+                    const usersToEnroll = validUsers.filter(u => emailsToEnroll.includes(u.email));
 
-                    const enrolledEmails = new Set<string>(
-                        (rows as Array<{ student_id: string }>).map(row => emailByStudentId.get(row.student_id) || '')
-                    );
+                    await tx.enrollments.createMany({
+                        data: usersToEnroll.map(u => ({
+                            id: randomUUID(),
+                            student_id: u.id,
+                            course_id: courseId,
+                            is_active: true,
+                            enrolled_at: new Date()
+                        })),
+                        skipDuplicates: true
+                    });
 
-                    for (const email of emailsToEnroll) {
-                        if (enrolledEmails.has(email)) {
-                            setDetail(email, 'enrolled');
-                            enrolled++;
-                        }
-                    }
+                    enrolled = usersToEnroll.length;
+                    usersToEnroll.forEach(u => {
+                        setDetail(u.email, 'enrolled');
+                    });
                 }
 
-                for (const email of studentEmails) {
-                    if (alreadyEnrolledEmails.has(email)) {
-                        setDetail(email, 'already_enrolled');
-                    }
-                }
+                // Mark already enrolled
+                Array.from(alreadyEnrolledEmails).forEach(email => {
+                    setDetail(email, 'already_enrolled');
+                });
 
-                const already_enrolled = Array.from(alreadyEnrolledEmails).length;
+                const already_enrolled = alreadyEnrolledEmails.size;
                 const details = originalEmails
                     .map(email => detailByEmail.get(email))
-                    .filter((detail): detail is { email: string; status: string } => Boolean(detail));
 
                 return {
                     enrolled,
@@ -356,71 +317,64 @@ export const EnrollmentModel = {
                     not_found,
                     created,
                     details
-                }
+                };
             });
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getEnrollmentByStudentIdAndCourseId: async (pgClient: any, studentId: string, courseId: string): Promise<Enrollment> => {
+    getEnrollmentByStudentIdAndCourseId: async (prisma: PrismaClient, studentId: string, courseId: string): Promise<Enrollment> => {
         try {
             if (!studentId || !courseId) {
                 throw new NotFoundError();
             }
 
-            const { rows } = await pgClient.query(
-                `SELECT id, student_id, course_id, is_active, enrolled_at, dropped_at 
-                 FROM enrollments 
-                 WHERE student_id = $1 AND course_id = $2 AND is_active = true`,
-                [studentId, courseId]
-            );
+            const enrollment = await prisma.enrollments.findFirstOrThrow({
+                where: {
+                    student_id: studentId,
+                    course_id: courseId,
+                    is_active: true
+                }
+            });
 
-            if (rows.length === 0) {
-                throw new NotFoundError('Enrollment not found for the given student and course');
-            }
-
-            return rows[0] as Enrollment;
+            return enrollment;
         } catch (err: any) {
+            if (err.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError('Enrollment not found');
+            }
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    delete: async (pgClient: any, user: EnrollmentActor, enrollmentId: string) => {
+    delete: async (prisma: PrismaClient, user: EnrollmentActor, enrollmentId: string) => {
         try {
             if (!enrollmentId) {
                 throw new NotFoundError();
             }
 
-            let result;
-            if (user.role === USER_ROLE_TYPES.ADMIN) {
-                result = await pgClient.query(
-                    `UPDATE enrollments
-                     SET is_active = false, dropped_at = NOW()
-                     WHERE id = $1 AND is_active = TRUE
-                     RETURNING id`,
-                    [enrollmentId]
-                );
-            } else {
-                result = await pgClient.query(
-                    `UPDATE enrollments e
-                     SET is_active = false, dropped_at = NOW()
-                     FROM courses c
-                     WHERE e.id = $1
-                       AND e.course_id = c.id
-                       AND e.is_active = TRUE
-                       AND c.instructor_id = $2
-                     RETURNING e.student_id, e.course_id`,
-                    [enrollmentId, user.id]
-                );
+            const where = { id: enrollmentId } as any;
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                where.courses = {
+                    instructor_id: user.id
+                };
             }
+            const result = await prisma.enrollments.update({
+                where,
+                data: {
+                    is_active: false,
+                    dropped_at: new Date()
+                }
+            });
 
-            if (result.rows.length === 0) {
+            return {
+                student_id: result.student_id,
+                course_id: result.course_id
+            };
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
                 throw new NotFoundError('Enrollment not found');
             }
-
-            return result.rows[0] as { student_id: string; course_id: string };
-        } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }

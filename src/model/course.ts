@@ -187,18 +187,19 @@ export const CourseModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    isCourseActiveAndValid: async (prisma: PrismaClient, courseId: string): Promise<boolean> => {
+    isCourseActiveAndValid: async (prisma: PrismaClient, courseId: string, instructorId?: string): Promise<boolean> => {
         try {
-            const course = await prisma.courses.findUniqueOrThrow({
-                where: { id: courseId },
+            const where: any = { id: courseId, is_active: true };
+            if (instructorId) {
+                where.instructor_id = instructorId;
+            }
+            const course = await prisma.courses.findUnique({
+                where,
                 select: { is_active: true }
             });
 
-            return course.is_active;
+            return course ? true : false;
         } catch (err: any) {
-            if (err?.code === PrismaCodeMap.NOT_FOUND) {
-                throw new NotFoundError('Course not found');
-            }
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }

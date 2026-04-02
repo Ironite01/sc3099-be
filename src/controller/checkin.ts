@@ -76,7 +76,7 @@ async function checkinController(fastify: FastifyInstance) {
                     break;
             }
 
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(await fastify.prisma, {
                 userId,
                 action: auditAction,
                 resourceType,
@@ -104,7 +104,7 @@ async function checkinController(fastify: FastifyInstance) {
                 risk_signals: checkin.risk_signals || []
             });
         } catch (err) {
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(await fastify.prisma, {
                 userId,
                 action: AUDIT_ACTIONS.CHECKIN_ATTEMPTED,
                 resourceType,
@@ -317,7 +317,7 @@ async function checkinController(fastify: FastifyInstance) {
 
             const result = await CheckinModel.appeal(pgClient, studentId, id, appeal_reason);
 
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(await fastify.prisma, {
                 userId: (req.user as any)?.sub,
                 action: AUDIT_ACTIONS.CHECKIN_APPEALED,
                 resourceType,
@@ -390,7 +390,7 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             }
 
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(await fastify.prisma, {
                 userId: (req.user as any)?.sub,
                 action: auditAction,
                 resourceType,

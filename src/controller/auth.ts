@@ -48,10 +48,9 @@ async function authController(fastify: FastifyInstance) {
         })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
-        const pgClient = await fastify.pg.connect();
         const user = await UserModel.create(prisma, req.body as any);
 
-        await AuditModel.log(pgClient, {
+        await AuditModel.log(prisma, {
             userId: user.id,
             action: AUDIT_ACTIONS.USER_CREATED,
             resourceType,
@@ -96,14 +95,13 @@ async function authController(fastify: FastifyInstance) {
         })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
-        const pgClient = await fastify.pg.connect();
         const { email, password: passwordClaim }: any = req.body;
         let user: any;
         try {
             user = await UserModel.login(prisma, email, passwordClaim);
             loginTotal.inc({ status: 'success' });
 
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(prisma, {
                 userId: user.id,
                 action: AUDIT_ACTIONS.LOGIN_SUCCESS,
                 resourceType,
@@ -130,7 +128,7 @@ async function authController(fastify: FastifyInstance) {
 
                     // Log as security_violation if multiple failures detected
                     if (failedAttempts >= 5) {
-                        await AuditModel.log(pgClient, {
+                        await AuditModel.log(prisma, {
                             userId: null,
                             action: AUDIT_ACTIONS.SECURITY_VIOLATION,
                             resourceType,
@@ -146,7 +144,7 @@ async function authController(fastify: FastifyInstance) {
                 console.error('Failed to check login attempts:', redisErr);
             }
 
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(prisma, {
                 userId: null,
                 action: AUDIT_ACTIONS.LOGIN_FAILED,
                 resourceType,
@@ -239,10 +237,9 @@ async function authController(fastify: FastifyInstance) {
 
     // Extra endpoint
     fastify.post(`${uri}/logout`, { preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
         const userId = (req.user as any)?.sub;
         if (userId) {
-            await AuditModel.log(pgClient, {
+            await AuditModel.log(await fastify.prisma, {
                 userId: userId,
                 action: AUDIT_ACTIONS.LOGOUT,
                 resourceType,

@@ -139,7 +139,7 @@ async function deviceController(fastify: FastifyInstance) {
         const userId = (req?.user as any).sub;
 
         const device = await DeviceModel.register(prisma, userId, req.body as any);
-        await AuditModel.log(await fastify.pg.connect(), {
+        await AuditModel.log(prisma, {
             userId: userId,
             action: AUDIT_ACTIONS.DEVICE_REGISTERED,
             resourceType,

@@ -60,11 +60,10 @@ async function userController(fastify: FastifyInstance) {
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
-        const pgClient = await fastify.pg.connect();
         const userId = (req?.user as any)?.sub;
         const updatedUser = await UserModel.updateById(prisma, userId, req.body as any);
 
-        await AuditModel.log(pgClient, {
+        await AuditModel.log(prisma, {
             userId,
             action: AUDIT_ACTIONS.USER_UPDATED,
             resourceType,
@@ -181,12 +180,11 @@ async function userController(fastify: FastifyInstance) {
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
-        const pgClient = await fastify.pg.connect();
         const userId = (req?.user as any).sub;
 
         const u = await UserModel.faceEnroll(prisma, userId, (req.body as { image: string }).image);
 
-        await AuditModel.log(pgClient, {
+        await AuditModel.log(prisma, {
             userId,
             action: AUDIT_ACTIONS.FACE_ENROLLED,
             resourceType,
