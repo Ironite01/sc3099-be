@@ -25,7 +25,7 @@ async function sessionController(fastify: any) {
                     offset: { type: 'integer', default: 0 }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -147,13 +147,12 @@ async function sessionController(fastify: any) {
                     qr_code_enabled: { type: 'boolean', default: false }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
-        // In this endpoint, we also allow TA since there is a relation with them and sessions.
         const pgClient = await fastify.pg.connect();
         try {
             const user = req.user as any;
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
                 (req.body as any).instructor_id = user.sub;
             }
             const session = await SessionModel.create(pgClient, req.body as any);
@@ -207,7 +206,7 @@ async function sessionController(fastify: any) {
                     qr_code_enabled: { type: 'boolean' }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -252,7 +251,7 @@ async function sessionController(fastify: any) {
                 required: ['session_id'],
                 properties: { session_id: { type: 'string' } }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {

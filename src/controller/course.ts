@@ -20,7 +20,7 @@ async function courseController(fastify: any) {
                 }
             }
         },
-        preHandler: [fastify.rateLimit()]
+        preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -118,6 +118,7 @@ async function courseController(fastify: any) {
                     require_face_recognition: { type: 'boolean' },
                     require_device_binding: { type: 'boolean' },
                     risk_threshold: { type: 'number' },
+                    is_active: { type: 'boolean' },
                     instructor_id: { type: 'string' }
                 }
             }

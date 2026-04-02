@@ -327,6 +327,8 @@ async function checkinController(fastify: FastifyInstance) {
                 risk_factors: c.risk_factors,
                 risk_signals: c.risk_signals || [],
                 liveness_passed: c.liveness_passed,
+                liveness_score: c.liveness_score,
+                face_match_score: c.face_match_score,
                 device_trusted: c.device_is_trusted
             })));
         } finally {

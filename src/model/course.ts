@@ -163,6 +163,7 @@ export const CourseModel = {
         require_face_recognition?: boolean;
         require_device_binding?: boolean;
         risk_threshold?: number;
+        is_active?: boolean;
         instructor_id?: string | null;
     }, user: { sub: string; role: USER_ROLE_TYPES }): Promise<Course | null> => {
         try {
@@ -179,7 +180,7 @@ export const CourseModel = {
             const UPDATABLE_FIELDS = [
                 'name', 'description', 'venue_name', 'venue_latitude', 'venue_longitude',
                 'geofence_radius_meters', 'require_face_recognition', 'require_device_binding',
-                'risk_threshold', 'instructor_id'
+                'risk_threshold', 'is_active', 'instructor_id'
             ];
 
             for (const field of UPDATABLE_FIELDS) {

@@ -43,7 +43,7 @@ async function statsController(fastify: FastifyInstance) {
                 properties: { sessionId: { type: 'string' } }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { sessionId } = req.params as { sessionId: string };
         const pgClient = await fastify.pg.connect();
