@@ -22,22 +22,18 @@ async function courseController(fastify: any) {
         },
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { is_active, semester, limit = 50, offset = 0 } = req.query as any;
-            let req_instructor_id = (req.user as any).role === USER_ROLE_TYPES.ADMIN ? (req.query as any).instructor_id : null;
+        const prisma = await fastify.prisma;
+        const { is_active, semester, limit = 50, offset = 0 } = req.query as any;
+        let req_instructor_id = (req.user as any).role === USER_ROLE_TYPES.ADMIN ? (req.query as any).instructor_id : null;
 
-            const { items, total } = await CourseModel.getFilteredCourses(pgClient, {
-                is_active,
-                semester,
-                instructor_id: req_instructor_id,
-                limit,
-                offset
-            });
-            res.status(200).send({ items, total, limit, offset });
-        } finally {
-            pgClient.release();
-        }
+        const { items, total } = await CourseModel.getFilteredCourses(prisma, {
+            is_active,
+            semester,
+            instructor_id: req_instructor_id,
+            limit,
+            offset
+        });
+        res.status(200).send({ items, total, limit, offset });
     });
 
     fastify.get(`${uri}/:course_id`, {
@@ -49,15 +45,10 @@ async function courseController(fastify: any) {
             }
         }, preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { course_id } = req.params as any;
-            const course = await CourseModel.findById(pgClient, course_id);
-
-            res.status(200).send(course);
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        const { course_id } = req.params as any;
+        const course = await CourseModel.findById(prisma, course_id);
+        res.status(200).send(course);
     });
 
     fastify.post(`${uri}/`, {
@@ -82,18 +73,9 @@ async function courseController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const body = { ...(req.body as any) };
-
-            const course = await CourseModel.create(pgClient, body);
-            res.status(201).send(course);
-        } catch (err: any) {
-            console.error('Error creating course:', err.message);
-            res.status(400).send({ detail: err.message });
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        const course = await CourseModel.create(prisma, req.body as any);
+        res.status(201).send(course);
     });
 
     fastify.put(`${uri}/:course_id`, {
@@ -120,14 +102,10 @@ async function courseController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const user = req.user as any;
-            const course = await CourseModel.update(pgClient, (req.params as any).course_id, req.body as any, user);
-            res.status(200).send(course);
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        const user = req.user as any;
+        const course = await CourseModel.update(prisma, (req.params as any).course_id, req.body as any, user);
+        res.status(200).send(course);
     });
 
     fastify.delete(uri + '/:course_id', {
@@ -139,13 +117,9 @@ async function courseController(fastify: any) {
             },
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            await CourseModel.delete(pgClient, (req.params as any).course_id);
-            res.status(204).send();
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        await CourseModel.delete(prisma, (req.params as any).course_id);
+        res.status(204).send();
     });
 }
 

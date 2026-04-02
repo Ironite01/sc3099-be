@@ -1,99 +1,81 @@
+import { randomUUID } from 'crypto';
+import type { PrismaClient, courses as Course } from '../generated/prisma/client.js';
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "./error.js";
 import { USER_ROLE_TYPES } from "./user.js";
+import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
 
-export default interface Course {
-    id: string;
-    code: string;
-    name: string;
-    description?: string | null;
-    semester: string;
-    is_active: boolean;
-    venue_latitude?: number | null;
-    venue_longitude?: number | null;
-    venue_name?: string | null;
-    geofence_radius_meters: number;
-    require_face_recognition: boolean;
-    require_device_binding: boolean;
-    risk_threshold: number;
-    instructor_id: string | null;
-    created_at: Date;
-    updated_at: Date;
-}
+export type { Course }
 
 export const CourseModel = {
-    getFilteredCourses: async (pgClient: any, filters: {
+    getFilteredCourses: async (prisma: PrismaClient, filters: {
         is_active?: boolean | undefined;
         semester?: string | undefined;
         instructor_id?: string | undefined;
         limit?: number | undefined;
         offset?: number | undefined;
-    }): Promise<{ items: Course[]; total: number }> => {
-        const { is_active, semester, instructor_id, limit = 50, offset = 0 } = filters;
+    }) => {
+        try {
+            const [items, total] = await prisma.$transaction([
+                prisma.courses.findMany({
+                    where: {
+                        ...(filters.is_active !== undefined && { is_active: filters.is_active }),
+                        ...(filters.semester !== undefined && { semester: filters.semester }),
+                        ...(filters.instructor_id !== undefined && { instructor_id: filters.instructor_id })
+                    },
+                    select: {
+                        id: true,
+                        code: true,
+                        name: true,
+                        semester: true,
+                        instructor_id: true,
+                        venue_name: true,
+                        venue_latitude: true,
+                        venue_longitude: true,
+                        geofence_radius_meters: true,
+                        risk_threshold: true,
+                        is_active: true,
+                        created_at: true,
+                        users: {
+                            select: {
+                                id: true
+                            }
+                        }
+                    },
+                    orderBy: { created_at: 'desc' },
+                    skip: filters?.offset || 0,
+                    take: filters?.limit || 50
+                }),
+                prisma.courses.count({
+                    where: {
+                        ...(filters.is_active !== undefined && { is_active: filters.is_active }),
+                        ...(filters.semester !== undefined && { semester: filters.semester }),
+                        ...(filters.instructor_id !== undefined && { instructor_id: filters.instructor_id })
+                    }
+                })
+            ]);
 
-        let query = `SELECT c.*, u.full_name as instructor_name FROM courses c LEFT JOIN users u ON c.instructor_id = u.id WHERE 1=1`;
-        let countQuery = `SELECT COUNT(*) FROM courses c WHERE 1=1`;
-        const params: any[] = [];
-        const countParams: any[] = [];
-        let paramIndex = 1;
-        let countParamIndex = 1;
-
-        if (is_active !== undefined) {
-            query += ` AND c.is_active = $${paramIndex++}`;
-            params.push(is_active);
-            countQuery += ` AND c.is_active = $${countParamIndex++}`;
-            countParams.push(is_active);
+            return { items, total };
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
-
-        if (semester) {
-            query += ` AND c.semester = $${paramIndex++}`;
-            params.push(semester);
-            countQuery += ` AND c.semester = $${countParamIndex++}`;
-            countParams.push(semester);
-        }
-
-        if (instructor_id) {
-            query += ` AND c.instructor_id = $${paramIndex++}`;
-            params.push(instructor_id);
-            countQuery += ` AND c.instructor_id = $${countParamIndex++}`;
-            countParams.push(instructor_id);
-        }
-
-        query += ` ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-        params.push(limit, offset);
-
-        const result = await pgClient.query(query, params);
-        const countResult = await pgClient.query(countQuery, countParams);
-        const total = parseInt(countResult.rows[0].count);
-
-        return {
-            items: result.rows.map((row: any) => (
-                {
-                    "id": row.id,
-                    "code": row.code,
-                    "name": row.name,
-                    "semester": row.semester,
-                    "instructor_id": row.instructor_id,
-                    "instructor_name": row.instructor_name,
-                    "venue_name": row.venue_name,
-                    "venue_latitude": row.venue_latitude,
-                    "venue_longitude": row.venue_longitude,
-                    "geofence_radius_meters": row.geofence_radius_meters,
-                    "risk_threshold": row.risk_threshold,
-                    "is_active": row.is_active,
-                    "created_at": row.created_at
-                }
-            )), total
-        };
     },
-    findById: async (pgClient: any, id: string): Promise<Course | null> => {
-        const { rows } = await pgClient.query('SELECT * FROM courses WHERE id = $1', [id]);
 
-        if (rows.length === 0) {
-            throw new NotFoundError('Course not found');
+    findById: async (prisma: PrismaClient, id: string): Promise<Course> => {
+        try {
+            return await prisma.courses.findUniqueOrThrow({
+                where: { id }
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError('Course not found');
+            }
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
-        return rows[0] as Course;
     },
-    create: async (pgClient: any, data: {
+
+    create: async (prisma: PrismaClient, data: {
         code: string;
         name: string;
         semester: string;
@@ -108,52 +90,32 @@ export const CourseModel = {
         instructor_id: string;
     }): Promise<Course> => {
         try {
-            const {
-                code,
-                name,
-                semester,
-                description = null,
-                venue_name = null,
-                venue_latitude = null,
-                venue_longitude = null,
-                geofence_radius_meters = 100.0,
-                require_face_recognition = false,
-                require_device_binding = true,
-                risk_threshold = 0.5,
-                instructor_id
-            } = data;
-
-            const { rows } = await pgClient.query(
-                `INSERT INTO courses (
-                    id, code, name, description, semester, is_active,
-                    venue_latitude, venue_longitude, venue_name,
-                    geofence_radius_meters, require_face_recognition, require_device_binding,
-                    risk_threshold, instructor_id, created_at, updated_at
-                )
-                 VALUES (
-                    gen_random_uuid()::text, $1, $2, $3, $4, TRUE,
-                    $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW()
-                 )
-                 RETURNING *`,
-                [
-                    code, name, description, semester,
-                    venue_latitude, venue_longitude, venue_name,
-                    geofence_radius_meters, require_face_recognition, require_device_binding,
-                    risk_threshold, instructor_id
-                ]
-            );
-
-            if (rows.length === 0) {
-                throw new Error('Failed to create course');
-            }
-
-            return rows[0] as Course;
+            return await prisma.courses.create({
+                data: {
+                    id: randomUUID(),
+                    code: data.code!,
+                    name: data.name!,
+                    semester: data.semester!,
+                    is_active: true,
+                    instructor_id: data.instructor_id!,
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                    ...(data.description !== undefined && { description: data.description }),
+                    ...(data.venue_name !== undefined && { venue_name: data.venue_name }),
+                    ...(data.venue_latitude !== undefined && { venue_latitude: data.venue_latitude }),
+                    ...(data.venue_longitude !== undefined && { venue_longitude: data.venue_longitude }),
+                    ...(data.geofence_radius_meters !== undefined && { geofence_radius_meters: data.geofence_radius_meters }),
+                    ...(data.require_device_binding !== undefined && { require_device_binding: data.require_device_binding }),
+                    ...(data.risk_threshold !== undefined && { risk_threshold: data.risk_threshold }),
+                    ...(data.require_face_recognition !== undefined && { require_face_recognition: data.require_face_recognition }),
+                }
+            });
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    update: async (pgClient: any, id: string, data: {
+    update: async (prisma: PrismaClient, id: string, data: {
         name?: string;
         description?: string;
         venue_name?: string;
@@ -164,84 +126,76 @@ export const CourseModel = {
         require_device_binding?: boolean;
         risk_threshold?: number;
         instructor_id?: string | null;
-    }, user: { sub: string; role: USER_ROLE_TYPES }): Promise<Course | null> => {
+    }, user: { sub: string; role: USER_ROLE_TYPES }): Promise<Course> => {
         try {
-            // For instructors, we only allow them to edit their own courses
-            // Prevent instructors from changing course ownership to someone else
-            if (user && user.role === USER_ROLE_TYPES.INSTRUCTOR && data.instructor_id !== undefined && data.instructor_id !== user.sub) {
+            if (Object.keys(data).length === 0) {
+                throw new BadRequestError('No fields to update');
+            }
+
+            // For instructors, only allow editing their own courses
+            if (user?.role === USER_ROLE_TYPES.INSTRUCTOR && data.instructor_id !== undefined && data.instructor_id !== user.sub) {
                 throw new UnauthorizedError('Instructors cannot change course ownership');
             }
 
-            const fields: string[] = [];
-            const values: any[] = [];
-            let paramIndex = 1;
+            const where: any = { id };
+            if (user?.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                where.instructor_id = user.sub;
+            }
 
-            const UPDATABLE_FIELDS = [
-                'name', 'description', 'venue_name', 'venue_latitude', 'venue_longitude',
-                'geofence_radius_meters', 'require_face_recognition', 'require_device_binding',
-                'risk_threshold', 'instructor_id'
-            ];
+            return await prisma.courses.update({
+                where,
+                data: {
+                    ...(data.name !== undefined && { name: data.name }),
+                    ...(data.description !== undefined && { description: data.description }),
+                    ...(data.venue_name !== undefined && { venue_name: data.venue_name }),
+                    ...(data.venue_latitude !== undefined && { venue_latitude: data.venue_latitude }),
+                    ...(data.venue_longitude !== undefined && { venue_longitude: data.venue_longitude }),
+                    ...(data.geofence_radius_meters !== undefined && { geofence_radius_meters: data.geofence_radius_meters }),
+                    ...(data.require_face_recognition !== undefined && { require_face_recognition: data.require_face_recognition }),
+                    ...(data.require_device_binding !== undefined && { require_device_binding: data.require_device_binding }),
+                    ...(data.risk_threshold !== undefined && { risk_threshold: data.risk_threshold }),
+                    ...(data.instructor_id !== undefined && USER_ROLE_TYPES.ADMIN && { instructor_id: data.instructor_id }),
+                    updated_at: new Date()
+                } as any // check if instructor_id works here
+            }) as Course;
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError('Course not found');
+            }
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
 
-            for (const field of UPDATABLE_FIELDS) {
-                if ((data as any)[field] !== undefined) {
-                    fields.push(`${field} = $${paramIndex++}`);
-                    values.push((data as any)[field]);
+    delete: async (prisma: PrismaClient, id: string): Promise<void> => {
+        try {
+            await prisma.courses.update({
+                where: { id },
+                data: {
+                    is_active: false,
+                    updated_at: new Date()
                 }
-            }
-
-            if (fields.length === 0) {
-                throw new BadRequestError();
-            }
-
-            fields.push('updated_at = NOW()');
-            values.push(id);
-
-            let query = `UPDATE courses SET ${fields.join(', ')} WHERE id = $${paramIndex}`;
-            if (user && user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                query += ` AND instructor_id = $${paramIndex + 1}`;
-                values.push(user.sub);
-            }
-            query += ` RETURNING *`;
-            const { rows } = await pgClient.query(query, values);
-
-            if (rows.length === 0) {
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
                 throw new NotFoundError('Course not found');
             }
-
-            return rows[0] as Course;
-        } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    delete: async (pgClient: any, id: string) => {
+    isCourseActiveAndValid: async (prisma: PrismaClient, courseId: string): Promise<boolean> => {
         try {
-            const result = await pgClient.query(
-                `UPDATE courses SET is_active = FALSE, updated_at = NOW() WHERE id = $1`,
-                [id]
-            );
+            const course = await prisma.courses.findUniqueOrThrow({
+                where: { id: courseId },
+                select: { is_active: true }
+            });
 
-            if (result.rowCount === 0) {
+            return course.is_active;
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
                 throw new NotFoundError('Course not found');
             }
-        } catch (err: any) {
-            if (err instanceof AppError) throw err;
-            throw new BadRequestError('Database operation failed');
-        }
-    },
-    isCourseActiveAndValid: async (pgClient: any, courseId: string): Promise<boolean> => {
-        try {
-            const { rows } = await pgClient.query(
-                `SELECT is_active FROM courses WHERE id = $1`,
-                [courseId]
-            );
-
-            if (rows.length === 0) {
-                throw new NotFoundError('Course not found');
-            }
-
-            return Boolean(rows[0].is_active);
-        } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }

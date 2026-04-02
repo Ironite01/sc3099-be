@@ -17,11 +17,11 @@
 
 ### Courses
 
-#### GET /courses/
-#### GET /courses/{course_id}
-#### POST /courses/
-#### PUT /courses/{course_id}
-#### DELETE /courses/{course_id}
+#### GET /courses/✅
+#### GET /courses/{course_id}✅
+#### POST /courses/✅
+#### PUT /courses/{course_id}✅
+#### DELETE /courses/{course_id}✅
 
 ### Sessions
 
