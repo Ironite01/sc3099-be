@@ -183,10 +183,29 @@ export const AuditModel = {
             }) => {
         try {
             let { userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, details } = data;
+            const trim36 = (value?: string | null) => {
+                if (!value) return value ?? null;
+                return value.length > 36 ? value.slice(0, 36) : value;
+            };
+
+            const safeDetails = { ...(details || {}) } as Record<string, any>;
+            if (resourceId && resourceId.length > 36) {
+                safeDetails.resource_id_full = resourceId;
+            }
+            if (deviceId && deviceId.length > 36) {
+                safeDetails.device_id_full = deviceId;
+            }
+            if (userId && userId.length > 36) {
+                safeDetails.user_id_full = userId;
+            }
+
+            const safeUserId = trim36(userId);
+            const safeResourceId = trim36(resourceId) || 'unknown';
+            let safeDeviceId = trim36(deviceId);
             if (!deviceId && action !== AUDIT_ACTIONS.USER_CREATED && userId) {
                 const devices = await DeviceModel.getByUserId(pgClient, userId);
                 if (devices.length > 0) {
-                    deviceId = devices[0]!.id;
+                    safeDeviceId = trim36(devices[0]!.id);
                 } else {
                     console.error(`No device found for user with id ${userId} during audit logging`);
                 }
@@ -195,7 +214,7 @@ export const AuditModel = {
                 `INSERT INTO audit_logs 
                     (id, user_id, action, resource_type, resource_id, ip_address, user_agent, device_id, success, details, timestamp)
                  VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-                [userId || null, action, resourceType, resourceId, ipAddress, userAgent, deviceId || null, success, JSON.stringify(details || {})]
+                [safeUserId || null, action, resourceType, safeResourceId, ipAddress, userAgent, safeDeviceId || null, success, JSON.stringify(safeDetails)]
             );
         } catch (error) {
             console.error('Failed to insert audit log:', error);

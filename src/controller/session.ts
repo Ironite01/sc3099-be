@@ -70,7 +70,9 @@ async function sessionController(fastify: any) {
                     scheduled_end: s.scheduled_end,
                     checkin_opens_at: s.checkin_opens_at,
                     checkin_closes_at: s.checkin_closes_at,
-                    venue_name: s.venue_name
+                    venue_name: s.venue_name,
+                    require_liveness_check: s.require_liveness_check,
+                    require_face_match: s.require_face_match
                 })));
             } finally {
                 pgClient.release();

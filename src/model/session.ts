@@ -112,7 +112,8 @@ export const SessionModel = {
             const { rows } = await pgClient.query(
                 `SELECT s.id, s.course_id, s.name, s.status, s.scheduled_start,
             s.scheduled_end, s.checkin_opens_at, s.checkin_closes_at, s.venue_name,
-            s.venue_latitude, s.venue_longitude, c.code AS course_code
+            s.venue_latitude, s.venue_longitude, s.require_liveness_check,
+            s.require_face_match, c.code AS course_code
             FROM sessions s 
             INNER JOIN courses c 
             ON s.course_id = c.id 

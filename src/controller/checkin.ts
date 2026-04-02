@@ -1,5 +1,6 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { randomUUID } from 'crypto';
 import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
@@ -9,6 +10,58 @@ import { LivenessChallengeType } from '../services/ml/liveness/check.js';
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
     const resourceType = 'checkin';
+    const challengeTypes: LivenessChallengeType[] = [
+        LivenessChallengeType.HEAD_LEFT,
+        LivenessChallengeType.HEAD_RIGHT,
+        LivenessChallengeType.HEAD_UP,
+        LivenessChallengeType.HEAD_DOWN,
+    ];
+    const challengeInstruction: Record<LivenessChallengeType, string> = {
+        [LivenessChallengeType.BLINK]: 'Blink your eyes',
+        [LivenessChallengeType.HEAD_LEFT]: 'Turn your head left',
+        [LivenessChallengeType.HEAD_RIGHT]: 'Turn your head right',
+        [LivenessChallengeType.HEAD_UP]: 'Look up',
+        [LivenessChallengeType.HEAD_DOWN]: 'Look down',
+        [LivenessChallengeType.HEAD_TURN]: 'Turn your head',
+        [LivenessChallengeType.PASSIVE]: 'Look at the camera',
+    };
+
+    fastify.post(`${uri}/challenge`, {
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    session_id: { type: 'string', format: 'uuid' }
+                },
+                required: ['session_id'],
+                additionalProperties: false
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const { session_id } = req.body as any;
+        const userId = (req.user as any)?.sub;
+        const challengeType = challengeTypes[Math.floor(Math.random() * challengeTypes.length)] || LivenessChallengeType.HEAD_LEFT;
+        const challengeToken = randomUUID();
+        const expiresInSeconds = 180;
+
+        await fastify.redis.set(
+            `checkin:challenge:${challengeToken}`,
+            JSON.stringify({
+                user_id: userId,
+                session_id,
+                challenge_type: challengeType,
+            }),
+            { EX: expiresInSeconds }
+        );
+
+        res.status(200).send({
+            challenge_token: challengeToken,
+            challenge_type: challengeType,
+            instruction: challengeInstruction[challengeType] || challengeInstruction[LivenessChallengeType.HEAD_LEFT],
+            expires_in_seconds: expiresInSeconds
+        });
+    });
 
     fastify.post(uri, {
         schema: {
@@ -21,6 +74,8 @@ async function checkinController(fastify: FastifyInstance) {
                     location_accuracy_meters: { type: 'number' },
                     device_fingerprint: { type: 'string' },
                     liveness_challenge_response: { type: 'string' },
+                    liveness_challenge_token: { type: 'string' },
+                    face_verification_image: { type: 'string' },
                     liveness_challenge_type: { type: 'string', enum: Object.values(LivenessChallengeType) },
                     qr_code: { type: 'string' }
                 },
@@ -34,10 +89,52 @@ async function checkinController(fastify: FastifyInstance) {
             keyGenerator: (req: FastifyRequest) => `rl:checkin:${(req.user as any)?.sub || req.ip}`
         })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response, qr_code } = req.body as any;
+        const {
+            session_id,
+            latitude,
+            longitude,
+            location_accuracy_meters,
+            device_fingerprint,
+            liveness_challenge_response,
+            liveness_challenge_token,
+            face_verification_image,
+            liveness_challenge_type,
+            qr_code
+        } = req.body as any;
         const userId = (req.user as any)?.sub;
         const ipAddr = req.ip;
         const userAgent = req.headers['user-agent'];
+
+        if (liveness_challenge_type && liveness_challenge_type !== LivenessChallengeType.PASSIVE) {
+            if (!liveness_challenge_token || typeof liveness_challenge_token !== 'string') {
+                res.status(400).send({ statusCode: 400, error: 'Bad Request', message: 'Liveness challenge token is required' });
+                return;
+            }
+
+            const challengeRaw = await fastify.redis.get(`checkin:challenge:${liveness_challenge_token}`);
+            if (!challengeRaw) {
+                res.status(400).send({ statusCode: 400, error: 'Bad Request', message: 'Liveness challenge expired or invalid' });
+                return;
+            }
+
+            let challengeData: any;
+            try {
+                challengeData = JSON.parse(challengeRaw);
+            } catch {
+                res.status(400).send({ statusCode: 400, error: 'Bad Request', message: 'Invalid liveness challenge token' });
+                return;
+            }
+
+            const matchesUser = challengeData?.user_id === userId;
+            const matchesSession = challengeData?.session_id === session_id;
+            const matchesType = challengeData?.challenge_type === liveness_challenge_type;
+            if (!matchesUser || !matchesSession || !matchesType) {
+                res.status(400).send({ statusCode: 400, error: 'Bad Request', message: 'Liveness challenge does not match this check-in' });
+                return;
+            }
+
+            await fastify.redis.del(`checkin:challenge:${liveness_challenge_token}`);
+        }
 
         const u = {
             ipAddr,
@@ -47,6 +144,9 @@ async function checkinController(fastify: FastifyInstance) {
             location_accuracy_meters,
             device_fingerprint,
             liveness_challenge_response,
+            liveness_challenge_token,
+            face_verification_image,
+            liveness_challenge_type,
             qr_code
         };
 

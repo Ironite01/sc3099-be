@@ -130,7 +130,7 @@ async function deviceController(fastify: FastifyInstance) {
                         type: 'boolean'
                     }
                 },
-                required: ['device_fingerprint', 'public_key'],
+                required: ['device_fingerprint'],
                 additionalProperties: false
             }
         }
@@ -183,7 +183,7 @@ async function deviceController(fastify: FastifyInstance) {
         const pgClient = await fastify.pg.connect();
         try {
             const userId = (req?.user as any).sub;
-            const devices = await DeviceModel.getByUserId(pgClient, userId);
+            const devices = await DeviceModel.getByUserId(pgClient, userId, true);
 
             res.status(200).send(
                 devices.map(device => ({

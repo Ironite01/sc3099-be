@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { AppError, BadRequestError, NotFoundError, ForbiddenError } from './error.js';
+import { AppError, BadRequestError, NotFoundError, ForbiddenError, ConflictError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 import deviceAttestationService from '../services/attestation/index.js';
 
@@ -54,7 +54,7 @@ export const DeviceModel = {
             browser?: string;
             os_version?: string;
             app_version?: string;
-            public_key: string;
+            public_key?: string;
             platformAttestation?: {
                 integrityToken?: string;
                 attestationObject?: string;
@@ -75,6 +75,9 @@ export const DeviceModel = {
             deviceDetectedEmulator,
             deviceDetectedRooted
         } = payload;
+        const resolvedPublicKey = public_key && public_key.trim().length > 0
+            ? public_key
+            : `legacy:${device_fingerprint}`;
         // Check if the platform is valid if platform is provided in the payload
         if (platform && !Object.values(PLATFORM_TYPES).includes(platform as PLATFORM_TYPES)) {
             throw new BadRequestError("Invalid platform type");
@@ -89,47 +92,95 @@ export const DeviceModel = {
 
         return transact(async (pgClient: PoolClient) => {
             try {
-                try {
-                    const existingDeviceIfAny = await this.getByFingerprint(pgClient, userId, device_fingerprint);
-                    if (existingDeviceIfAny && existingDeviceIfAny.revocation_reason === `Deleted by ${USER_ROLE_TYPES.ADMIN}`) {
+                const existingByFingerprint = await pgClient.query(
+                    `SELECT * FROM devices WHERE device_fingerprint = $1 LIMIT 1`,
+                    [device_fingerprint]
+                );
+
+                const existingDevice = existingByFingerprint.rows[0] as Device | undefined;
+                const isAdminRevoked = (reason?: string) =>
+                    typeof reason === 'string' &&
+                    reason.toLowerCase().includes(`deleted by ${USER_ROLE_TYPES.ADMIN}`);
+
+                if (existingDevice && existingDevice.user_id !== userId) {
+                    if (isAdminRevoked(existingDevice.revocation_reason)) {
                         throw new ForbiddenError("This device has been revoked by an administrator");
                     }
-                } catch {
-                    // Do nothing...
+
+                    if (existingDevice.is_active) {
+                        throw new ConflictError('Device fingerprint already registered to another account');
+                    }
                 }
 
-                const { rows } = await pgClient.query(
-                    `INSERT INTO devices (
-                    id, user_id, device_fingerprint, device_name, platform, public_key,
-                    public_key_created_at, is_trusted, trust_score, is_active, first_seen_at, last_seen_at,
-                    total_checkins, browser, os_version, app_version,
-                    attestation_passed, is_emulator, is_rooted_jailbroken
-                ) VALUES (
-                    gen_random_uuid()::text, $1, $2, $3, $4, $5,
-                    NOW(),
-                    FALSE, 'low', TRUE, NOW(), NOW(),
-                    0, $6, $7, $8, $9, $10, $11
-                )
-                ON CONFLICT (device_fingerprint)
-                    DO UPDATE SET
-                        device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
-                        platform = COALESCE(EXCLUDED.platform, devices.platform),
-                        browser = COALESCE(EXCLUDED.browser, devices.browser),
-                        os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
-                        app_version = COALESCE(EXCLUDED.app_version, devices.app_version),
-                        public_key = EXCLUDED.public_key,
-                        public_key_created_at = EXCLUDED.public_key_created_at,
-                        attestation_passed = EXCLUDED.attestation_passed,
-                        is_emulator = EXCLUDED.is_emulator,
-                        is_rooted_jailbroken = EXCLUDED.is_rooted_jailbroken,
-                        is_active = TRUE,
-                        revoked_at = NULL,
-                        revocation_reason = NULL,
-                        last_seen_at = EXCLUDED.last_seen_at
-                RETURNING *`,
-                    [userId, device_fingerprint, device_name ?? null, platform ?? null, public_key, browser, os_version, app_version,
-                        attestationResult.isEmulator, attestationResult.isRootedJailbroken, attestationResult.passed]
-                );
+                if (
+                    existingDevice &&
+                    existingDevice.user_id === userId &&
+                    isAdminRevoked(existingDevice.revocation_reason)
+                ) {
+                    throw new ForbiddenError("This device has been revoked by an administrator");
+                }
+
+                const { rows } = existingDevice
+                    ? await pgClient.query(
+                        `UPDATE devices
+                         SET user_id = $1,
+                             device_name = COALESCE($2, device_name),
+                             platform = COALESCE($3, platform),
+                             browser = COALESCE($4, browser),
+                             os_version = COALESCE($5, os_version),
+                             app_version = COALESCE($6, app_version),
+                             public_key = $7,
+                             public_key_created_at = NOW(),
+                             attestation_passed = $8,
+                             is_emulator = $9,
+                             is_rooted_jailbroken = $10,
+                             is_active = TRUE,
+                             revoked_at = NULL,
+                             revocation_reason = NULL,
+                             last_seen_at = NOW()
+                        WHERE id = $11
+                         RETURNING *`,
+                        [
+                            userId,
+                            device_name ?? null,
+                            platform ?? null,
+                            browser ?? null,
+                            os_version ?? null,
+                            app_version ?? null,
+                            resolvedPublicKey,
+                            attestationResult.passed,
+                            attestationResult.isEmulator,
+                            attestationResult.isRootedJailbroken,
+                            existingDevice.id
+                        ]
+                    )
+                    : await pgClient.query(
+                        `INSERT INTO devices (
+                            id, user_id, device_fingerprint, device_name, platform, public_key,
+                            public_key_created_at, is_trusted, trust_score, is_active, first_seen_at, last_seen_at,
+                            total_checkins, browser, os_version, app_version,
+                            attestation_passed, is_emulator, is_rooted_jailbroken
+                        ) VALUES (
+                            gen_random_uuid()::text, $1, $2, $3, $4, $5,
+                            NOW(),
+                            FALSE, 'low', TRUE, NOW(), NOW(),
+                            0, $6, $7, $8, $9, $10, $11
+                        )
+                        RETURNING *`,
+                        [
+                            userId,
+                            device_fingerprint,
+                            device_name ?? null,
+                            platform ?? null,
+                            resolvedPublicKey,
+                            browser ?? null,
+                            os_version ?? null,
+                            app_version ?? null,
+                            attestationResult.passed,
+                            attestationResult.isEmulator,
+                            attestationResult.isRootedJailbroken
+                        ]
+                    );
 
                 if (rows.length === 0) {
                     throw new BadRequestError('Failed to register device');
@@ -145,6 +196,9 @@ export const DeviceModel = {
                 return d;
             } catch (err: any) {
                 if (err instanceof AppError) throw err;
+                if (err?.code === '23505') {
+                    throw new ConflictError('Device fingerprint already registered to another account');
+                }
                 throw new BadRequestError('Database operation failed');
             }
         });
@@ -268,14 +322,14 @@ export const DeviceModel = {
     delete: async function deleteDevice(pgClient: PoolClient, deviceId: string, user: { userId: string, userRole: string }) {
         const { userId, userRole } = user;
 
-        if (userRole !== USER_ROLE_TYPES.ADMIN && userRole !== USER_ROLE_TYPES.STUDENT) {
-            throw new ForbiddenError();
-        }
-
+        const isAdmin = userRole === USER_ROLE_TYPES.ADMIN;
         const result = await pgClient.query(
-            `UPDATE devices SET is_active = false, revoked_at = NOW(), revocation_reason = 'Deleted by ${userRole}'
-            WHERE id = $1 ${userRole === USER_ROLE_TYPES.ADMIN ? '' : 'AND user_id = $2'}`,
-            userRole === USER_ROLE_TYPES.ADMIN ? [deviceId] : [deviceId, userId]
+            `UPDATE devices
+             SET is_active = false, revoked_at = NOW(), revocation_reason = $2
+             WHERE id = $1 ${isAdmin ? '' : 'AND user_id = $3'}`,
+            isAdmin
+                ? [deviceId, `Deleted by ${userRole}`]
+                : [deviceId, `Deleted by ${userRole}`, userId]
         );
 
         // Either error or the user does not own the device
@@ -285,7 +339,7 @@ export const DeviceModel = {
     },
     updateAfterCheckin: async function updateAfterCheckin(pgClient: PoolClient, deviceId: string, riskScore: string) {
         const { rows } = await pgClient.query(
-            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), risk_score = $2
+            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), trust_score = $2
             WHERE id = $1 RETURNING *`,
             [deviceId, riskScore]
         );

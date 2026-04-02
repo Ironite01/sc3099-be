@@ -62,12 +62,25 @@ export const CheckinModel = {
             location_accuracy_meters: number;
             device_fingerprint: string;
             liveness_challenge_response?: any;
+            face_verification_image?: any;
             liveness_challenge_type?: LivenessChallengeType;
             qr_code?: string;
         }
     ) {
         try {
-            const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent } = payload;
+            const {
+                session_id,
+                latitude,
+                longitude,
+                location_accuracy_meters,
+                device_fingerprint,
+                liveness_challenge_response = null,
+                face_verification_image = null,
+                liveness_challenge_type = LivenessChallengeType.PASSIVE,
+                qr_code,
+                ipAddr,
+                userAgent
+            } = payload;
             return await transact(async (pgClient) => {
                 // 1. Validate device
                 const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
@@ -115,7 +128,15 @@ export const CheckinModel = {
                 }
 
                 // 4. Validate enrollment
-                const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+                let enrollment;
+                try {
+                    enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+                } catch (err: any) {
+                    if (err instanceof NotFoundError) {
+                        throw new BadRequestError('Student is not enrolled in this course');
+                    }
+                    throw err;
+                }
                 if (!enrollment) {
                     throw new BadRequestError('Student is not enrolled in this course');
                 }
@@ -130,20 +151,25 @@ export const CheckinModel = {
                 const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
                 const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
 
+                let status = CHECKIN_STATUS.PENDING;
+                const requireLiveness = session.require_liveness_check !== false;
+                const requireFaceMatch = session.require_face_match === true;
+
                 // 6. Liveness check and face verification
                 const user = await UserModel.getById(pgClient, studentId);
-                if (!user || !user.is_active || !user.face_embedding_hash) {
+                if (!user || !user.is_active) {
+                    throw new BadRequestError('Unable to perform face verification for user');
+                }
+                if (requireFaceMatch && !user.face_embedding_hash) {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
 
-                let status = CHECKIN_STATUS.PENDING;
-                const requireLiveness = session.require_liveness_check !== false;
                 if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
                     throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
                 }
 
-                const requireFaceMatch = session.require_face_match !== false;
-                if (requireFaceMatch && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                const verificationImage = face_verification_image || liveness_challenge_response;
+                if (requireFaceMatch && (!verificationImage || !isBase64(verificationImage))) {
                     throw new BadRequestError('Face image is required and must be a valid base64 string');
                 }
 
@@ -176,8 +202,8 @@ export const CheckinModel = {
                     let faceResult;
                     try {
                         faceResult = await MlServices.face.verify.post({
-                            image: liveness_challenge_response,
-                            reference_template_hash: user.face_embedding_hash
+                            image: verificationImage,
+                            reference_template_hash: user.face_embedding_hash!
                         });
                     } catch (err: any) {
                         const msg = String(err?.message || 'Failed to verify face.');
