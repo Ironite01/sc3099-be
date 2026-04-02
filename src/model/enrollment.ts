@@ -11,7 +11,92 @@ type EnrollmentActor = {
     role: USER_ROLE_TYPES;
 };
 
-export type { Enrollment };
+async function assertInstructorOwnsCourse(pgClient: any, courseId: string, userId: string) {
+    const ownershipResult = await pgClient.query(
+        `SELECT 1
+         FROM courses
+         WHERE id = $1 AND instructor_id = $2`,
+        [courseId, userId]
+    );
+
+    if (ownershipResult.rowCount === 0) {
+        throw new NotFoundError('Course not found');
+    }
+}
+
+async function assertCanViewCourseEnrollments(pgClient: any, actor: EnrollmentActor, courseId: string) {
+    const courseResult = await pgClient.query(
+        `SELECT id, code, instructor_id
+         FROM courses
+         WHERE id = $1`,
+        [courseId]
+    );
+
+    if (courseResult.rowCount === 0) {
+        throw new NotFoundError('Course not found');
+    }
+
+    const course = courseResult.rows[0] as { id: string; code: string; instructor_id: string | null };
+
+    if (actor.role === USER_ROLE_TYPES.ADMIN) {
+        return course;
+    }
+
+    if (actor.role === USER_ROLE_TYPES.INSTRUCTOR) {
+        return course;
+    }
+
+    if (course.instructor_id === actor.id) {
+        return course;
+    }
+
+    if (actor.role === USER_ROLE_TYPES.TA) {
+        const taAccess = await pgClient.query(
+            `SELECT 1
+             FROM course_tas
+             WHERE course_id = $1 AND ta_id = $2
+             LIMIT 1`,
+            [courseId, actor.id]
+        );
+
+        if (taAccess.rowCount > 0) {
+            return course;
+        }
+    }
+
+    throw new NotFoundError('Course not found');
+}
+
+async function assertStudentCanBeEnrolled(pgClient: any, studentId: string) {
+    const studentResult = await pgClient.query(
+        `SELECT id, role, is_active
+         FROM users
+         WHERE id = $1`,
+        [studentId]
+    );
+
+    if (studentResult.rowCount === 0) {
+        throw new NotFoundError('Student not found');
+    }
+
+    const student = studentResult.rows[0] as { role: USER_ROLE_TYPES; is_active: boolean };
+    if (student.role !== USER_ROLE_TYPES.STUDENT) {
+        throw new BadRequestError('User is not a student');
+    }
+
+    if (!student.is_active) {
+        throw new BadRequestError('Student account is inactive');
+    }
+}
+
+export type Enrollment = {
+    id: string;
+    student_id: string;
+    course_id: string;
+    is_active: boolean;
+    enrolled_at: Date;
+    dropped_at?: Date;
+}
 
 export const EnrollmentModel = {
     getEnrollmentsByStudentId: async (prisma: PrismaClient, studentId: string) => {
@@ -164,22 +249,14 @@ export const EnrollmentModel = {
                 throw new BadRequestError('Student is already enrolled in this course');
             }
 
-            return await prisma.enrollments.create({
-                data: {
-                    id: randomUUID(),
-                    student_id: studentId,
-                    course_id: courseId,
-                    is_active: true,
-                    enrolled_at: new Date()
-                },
-                select: {
-                    id: true,
-                    student_id: true,
-                    course_id: true,
-                    is_active: true,
-                    enrolled_at: true
-                }
-            });
+            const { rows } = await pgClient.query(
+                `INSERT INTO enrollments (id, student_id, course_id, is_active, enrolled_at)
+                 VALUES (gen_random_uuid()::text, $1, $2, true, NOW())
+                 RETURNING id, student_id, course_id, is_active, enrolled_at`,
+                [studentId, courseId]
+            );
+
+            return rows[0] as Enrollment;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');

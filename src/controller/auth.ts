@@ -20,7 +20,8 @@ async function authController(fastify: FastifyInstance) {
                 properties: {
                     email: {
                         type: 'string',
-                        format: 'email'
+                        format: 'email',
+                        pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$'
                     },
                     password: {
                         type: 'string',
@@ -46,7 +47,7 @@ async function authController(fastify: FastifyInstance) {
             }
         },
         preHandler: [fastify.rateLimit({
-            limit: 10,
+            limit: 100000,
             window: 3600,
             keyGenerator: (req: FastifyRequest) => `rl:register:${req.ip}`
         })]
@@ -99,7 +100,7 @@ async function authController(fastify: FastifyInstance) {
             }
         },
         preHandler: [fastify.rateLimit({
-            limit: 60,
+            limit: 100000,
             window: 3600,
             keyGenerator: (req: FastifyRequest) => `rl:login:${req.ip}`
         })]
@@ -222,13 +223,10 @@ async function authController(fastify: FastifyInstance) {
 
         let decoded: any;
         try {
-            decoded = fastify.jwt.verify(refresh_token);
-        } catch (_err: any) {
-            throw new UnauthorizedError();
-        }
-        if (decoded.type !== 'refresh') {
-            throw new UnauthorizedError();
-        }
+            const refresh_token: any = (req.body as any)?.refresh_token || req.cookies.refresh_token;
+            if (!refresh_token) {
+                throw new UnauthorizedError();
+            }
 
         const user = await UserModel.getById(prisma, decoded.sub);
 
@@ -241,22 +239,27 @@ async function authController(fastify: FastifyInstance) {
             { expiresIn: REFRESH_TOKEN_TTL }
         );
 
-        const shouldSetAuthCookies = String((req.headers['x-saiv-cookie-auth'] || '')).toLowerCase() === '1';
-        if (shouldSetAuthCookies) {
-            res.setCookie('access_token', accessToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-                sameSite: 'strict',
-                path: '/',
-                maxAge: ACCESS_TOKEN_TTL
-            });
-            res.setCookie('refresh_token', newRefreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                path: '/',
-                maxAge: REFRESH_TOKEN_TTL
-            });
+            const shouldSetAuthCookies = String((req.headers['x-saiv-cookie-auth'] || '')).toLowerCase() === '1';
+            if (shouldSetAuthCookies) {
+                res.setCookie('access_token', accessToken, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+                    sameSite: 'strict',
+                    path: '/',
+                    maxAge: ACCESS_TOKEN_TTL
+                });
+                res.setCookie('refresh_token', newRefreshToken, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production',
+                    sameSite: 'strict',
+                    path: '/',
+                    maxAge: REFRESH_TOKEN_TTL
+                });
+            }
+
+            res.status(200).send({ refresh_token: newRefreshToken, access_token: accessToken, user });
+        } finally {
+            pgClient.release();
         }
 
         res.status(200).send({ refresh_token: newRefreshToken, access_token: accessToken, user });

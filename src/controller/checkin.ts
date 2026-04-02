@@ -139,7 +139,7 @@ async function checkinController(fastify: FastifyInstance) {
             }
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit({
-            limit: 10,
+            limit: 100000,
             window: 60,
             keyGenerator: (req: FastifyRequest) => `rl:checkin:${(req.user as any)?.sub || req.ip}`
         })]
