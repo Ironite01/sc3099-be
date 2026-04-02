@@ -192,30 +192,20 @@ export const AuditModel = {
             const safeUserId = trim36(userId);
             const safeResourceId = trim36(resourceId) || 'unknown';
             let safeDeviceId = trim36(deviceId);
-
             if (!deviceId && action !== AUDIT_ACTIONS.USER_CREATED && userId) {
-                try {
-                    const device = await DeviceModel.getCurrentActiveDevice(prisma, userId);
-                    safeDeviceId = trim36(device.id);
-                } catch (err) {
+                const devices = await DeviceModel.getByUserId(pgClient, userId);
+                if (devices.length > 0) {
+                    safeDeviceId = trim36(devices[0]!.id);
+                } else {
                     console.error(`No device found for user with id ${userId} during audit logging`);
                 }
             }
-            await prisma.audit_logs.create({
-                data: {
-                    id: randomUUID(),
-                    user_id: safeUserId || null,
-                    action: action,
-                    resource_type: resourceType,
-                    resource_id: safeResourceId,
-                    ip_address: ipAddress,
-                    user_agent: userAgent,
-                    device_id: safeDeviceId || null,
-                    success: success,
-                    details: JSON.stringify(safeDetails),
-                    timestamp: new Date()
-                }
-            });
+            await pgClient.query(
+                `INSERT INTO audit_logs 
+                    (id, user_id, action, resource_type, resource_id, ip_address, user_agent, device_id, success, details, timestamp)
+                 VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+                [safeUserId || null, action, resourceType, safeResourceId, ipAddress, userAgent, safeDeviceId || null, success, JSON.stringify(safeDetails)]
+            );
         } catch (error) {
             console.error('Failed to insert audit log:', error);
         }

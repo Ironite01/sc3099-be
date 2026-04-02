@@ -1,4 +1,4 @@
-import type { PrismaClient, devices as Device } from '../generated/prisma/client.js';
+import type { PoolClient } from 'pg';
 import { AppError, BadRequestError, NotFoundError, ForbiddenError, ConflictError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
@@ -52,11 +52,9 @@ export const DeviceModel = {
             deviceDetectedEmulator,
             deviceDetectedRooted
         } = payload;
-
         const resolvedPublicKey = public_key && public_key.trim().length > 0
             ? public_key
             : `legacy:${device_fingerprint}`;
-
         // Check if the platform is valid if platform is provided in the payload
         if (platform && !Object.values(PLATFORM_TYPES).includes(platform as PLATFORM_TYPES)) {
             throw new BadRequestError("Invalid platform type");
@@ -71,27 +69,98 @@ export const DeviceModel = {
 
         return prisma.$transaction(async (tx) => {
             try {
-                const existingDevice = await tx.devices.findFirst({
-                    where: {
-                        device_fingerprint
-                    }
-                });
+                const existingByFingerprint = await pgClient.query(
+                    `SELECT * FROM devices WHERE device_fingerprint = $1 LIMIT 1`,
+                    [device_fingerprint]
+                );
 
+                const existingDevice = existingByFingerprint.rows[0] as Device | undefined;
                 const isAdminRevoked = (reason?: string) =>
                     typeof reason === 'string' &&
                     reason.toLowerCase().includes(`deleted by ${USER_ROLE_TYPES.ADMIN}`);
 
-                if (existingDevice && userId !== existingDevice.user_id) {
-                    if (isAdminRevoked(existingDevice.revocation_reason!)) {
+                if (existingDevice && existingDevice.user_id !== userId) {
+                    if (isAdminRevoked(existingDevice.revocation_reason)) {
                         throw new ForbiddenError("This device has been revoked by an administrator");
                     }
-                    if (existingDevice && existingDevice.is_active) {
+
+                    if (existingDevice.is_active) {
                         throw new ConflictError('Device fingerprint already registered to another account');
                     }
                 }
 
-                if (existingDevice && existingDevice.user_id === userId && isAdminRevoked(existingDevice.revocation_reason!)) {
+                if (
+                    existingDevice &&
+                    existingDevice.user_id === userId &&
+                    isAdminRevoked(existingDevice.revocation_reason)
+                ) {
                     throw new ForbiddenError("This device has been revoked by an administrator");
+                }
+
+                const { rows } = existingDevice
+                    ? await pgClient.query(
+                        `UPDATE devices
+                         SET user_id = $1,
+                             device_name = COALESCE($2, device_name),
+                             platform = COALESCE($3, platform),
+                             browser = COALESCE($4, browser),
+                             os_version = COALESCE($5, os_version),
+                             app_version = COALESCE($6, app_version),
+                             public_key = $7,
+                             public_key_created_at = NOW(),
+                             attestation_passed = $8,
+                             is_emulator = $9,
+                             is_rooted_jailbroken = $10,
+                             is_active = TRUE,
+                             revoked_at = NULL,
+                             revocation_reason = NULL,
+                             last_seen_at = NOW()
+                        WHERE id = $11
+                         RETURNING *`,
+                        [
+                            userId,
+                            device_name ?? null,
+                            platform ?? null,
+                            browser ?? null,
+                            os_version ?? null,
+                            app_version ?? null,
+                            resolvedPublicKey,
+                            attestationResult.passed,
+                            attestationResult.isEmulator,
+                            attestationResult.isRootedJailbroken,
+                            existingDevice.id
+                        ]
+                    )
+                    : await pgClient.query(
+                        `INSERT INTO devices (
+                            id, user_id, device_fingerprint, device_name, platform, public_key,
+                            public_key_created_at, is_trusted, trust_score, is_active, first_seen_at, last_seen_at,
+                            total_checkins, browser, os_version, app_version,
+                            attestation_passed, is_emulator, is_rooted_jailbroken
+                        ) VALUES (
+                            gen_random_uuid()::text, $1, $2, $3, $4, $5,
+                            NOW(),
+                            FALSE, 'low', TRUE, NOW(), NOW(),
+                            0, $6, $7, $8, $9, $10, $11
+                        )
+                        RETURNING *`,
+                        [
+                            userId,
+                            device_fingerprint,
+                            device_name ?? null,
+                            platform ?? null,
+                            resolvedPublicKey,
+                            browser ?? null,
+                            os_version ?? null,
+                            app_version ?? null,
+                            attestationResult.passed,
+                            attestationResult.isEmulator,
+                            attestationResult.isRootedJailbroken
+                        ]
+                    );
+
+                if (rows.length === 0) {
+                    throw new BadRequestError('Failed to register device');
                 }
 
                 const device = existingDevice ?
@@ -155,6 +224,9 @@ export const DeviceModel = {
                     throw new ConflictError('Device fingerprint already registered to another account');
                 }
                 if (err instanceof AppError) throw err;
+                if (err?.code === '23505') {
+                    throw new ConflictError('Device fingerprint already registered to another account');
+                }
                 throw new BadRequestError('Database operation failed');
             }
         });
@@ -330,27 +402,30 @@ export const DeviceModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    updateAfterCheckin: async (prisma: PrismaClient, deviceId: string, trustScore: TRUST_SCORE_TYPES) => {
-        try {
-            await prisma.devices.update({
-                where: { id: deviceId },
-                data: {
-                    total_checkins: { increment: 1 },
-                    last_seen_at: new Date(),
-                    trust_score: trustScore
-                }
-            });
-        } catch (err: any) {
-            if (err?.code === PrismaCodeMap.NOT_FOUND) {
-                throw new NotFoundError("Device not found");
-            }
-            if (err instanceof AppError) throw err;
-            throw new BadRequestError('Database operation failed');
+    delete: async function deleteDevice(pgClient: PoolClient, deviceId: string, user: { userId: string, userRole: string }) {
+        const { userId, userRole } = user;
+
+        const isAdmin = userRole === USER_ROLE_TYPES.ADMIN;
+        const result = await pgClient.query(
+            `UPDATE devices
+             SET is_active = false, revoked_at = NOW(), revocation_reason = $2
+             WHERE id = $1 ${isAdmin ? '' : 'AND user_id = $3'}`,
+            isAdmin
+                ? [deviceId, `Deleted by ${userRole}`]
+                : [deviceId, `Deleted by ${userRole}`, userId]
+        );
+
+        // Either error or the user does not own the device
+        if (result.rowCount === 0) {
+            throw new ForbiddenError();
         }
     },
-    getFiltered: async (prisma: PrismaClient, params: { user_id?: string; is_active?: boolean; limit?: number; offset?: number }) => {
-        try {
-            const { user_id, is_active, limit = 50, offset = 0 } = params;
+    updateAfterCheckin: async function updateAfterCheckin(pgClient: PoolClient, deviceId: string, riskScore: string) {
+        const { rows } = await pgClient.query(
+            `UPDATE devices SET total_checkins = total_checkins + 1, last_seen_at = NOW(), trust_score = $2
+            WHERE id = $1 RETURNING *`,
+            [deviceId, riskScore]
+        );
 
             const where: any = {};
             if (user_id) where.user_id = user_id;

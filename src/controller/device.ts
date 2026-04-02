@@ -142,9 +142,10 @@ async function deviceController(fastify: FastifyInstance) {
     fastify.get(`${uri}/my-devices`, {
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = fastify.prisma;
-        const userId = (req?.user as any).sub;
-        const devices = await DeviceModel.getAllByUserId(prisma, userId, true);
+        const pgClient = await fastify.pg.connect();
+        try {
+            const userId = (req?.user as any).sub;
+            const devices = await DeviceModel.getByUserId(pgClient, userId, true);
 
         res.status(200).send(
             devices.map(device => ({

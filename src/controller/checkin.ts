@@ -1,5 +1,6 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { randomUUID } from 'crypto';
 import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
@@ -11,6 +12,58 @@ import { checkinTotal, riskScoreHistogram, checkinDistanceHistogram } from '../s
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
     const resourceType = 'checkin';
+    const challengeTypes: LivenessChallengeType[] = [
+        LivenessChallengeType.HEAD_LEFT,
+        LivenessChallengeType.HEAD_RIGHT,
+        LivenessChallengeType.HEAD_UP,
+        LivenessChallengeType.HEAD_DOWN,
+    ];
+    const challengeInstruction: Record<LivenessChallengeType, string> = {
+        [LivenessChallengeType.BLINK]: 'Blink your eyes',
+        [LivenessChallengeType.HEAD_LEFT]: 'Turn your head left',
+        [LivenessChallengeType.HEAD_RIGHT]: 'Turn your head right',
+        [LivenessChallengeType.HEAD_UP]: 'Look up',
+        [LivenessChallengeType.HEAD_DOWN]: 'Look down',
+        [LivenessChallengeType.HEAD_TURN]: 'Turn your head',
+        [LivenessChallengeType.PASSIVE]: 'Look at the camera',
+    };
+
+    fastify.post(`${uri}/challenge`, {
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    session_id: { type: 'string', format: 'uuid' }
+                },
+                required: ['session_id'],
+                additionalProperties: false
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const { session_id } = req.body as any;
+        const userId = (req.user as any)?.sub;
+        const challengeType = challengeTypes[Math.floor(Math.random() * challengeTypes.length)] || LivenessChallengeType.HEAD_LEFT;
+        const challengeToken = randomUUID();
+        const expiresInSeconds = 180;
+
+        await fastify.redis.set(
+            `checkin:challenge:${challengeToken}`,
+            JSON.stringify({
+                user_id: userId,
+                session_id,
+                challenge_type: challengeType,
+            }),
+            { EX: expiresInSeconds }
+        );
+
+        res.status(200).send({
+            challenge_token: challengeToken,
+            challenge_type: challengeType,
+            instruction: challengeInstruction[challengeType] || challengeInstruction[LivenessChallengeType.HEAD_LEFT],
+            expires_in_seconds: expiresInSeconds
+        });
+    });
 
     const challengeTypes: LivenessChallengeType[] = [
         LivenessChallengeType.HEAD_LEFT,

@@ -51,12 +51,13 @@ async function authController(fastify: FastifyInstance) {
             keyGenerator: (req: FastifyRequest) => `rl:register:${req.ip}`
         })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = fastify.prisma;
-        const body = req.body as any;
-        const user = await UserModel.create(prisma, {
-            ...body,
-            role: body.role || USER_ROLE_TYPES.STUDENT
-        });
+        const pgClient = await fastify.pg.connect();
+        try {
+            const body = req.body as any;
+            const user = await UserModel.create(pgClient, {
+                ...body,
+                role: body.role || USER_ROLE_TYPES.STUDENT
+            });
 
         await AuditModel.log(prisma, {
             userId: user.id,
@@ -166,29 +167,32 @@ async function authController(fastify: FastifyInstance) {
             throw err;
         }
 
-        const accessToken = fastify.jwt.sign(
-            { sub: user.id, email: user.email, role: user.role }, { expiresIn: ACCESS_TOKEN_TTL }
-        );
-        const refreshToken = fastify.jwt.sign(
-            { sub: user.id, type: 'refresh' }, { expiresIn: REFRESH_TOKEN_TTL }
-        );
+            const shouldSetAuthCookies = String((req.headers['x-saiv-cookie-auth'] || '')).toLowerCase() === '1';
+            if (shouldSetAuthCookies) {
+                res.setCookie('access_token', accessToken, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+                    sameSite: 'strict',
+                    path: '/',
+                    maxAge: ACCESS_TOKEN_TTL
+                });
+                res.setCookie('refresh_token', refreshToken, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production',
+                    sameSite: 'strict',
+                    path: '/',
+                    maxAge: REFRESH_TOKEN_TTL
+                });
+            }
 
-        const shouldSetAuthCookies = String((req.headers['x-saiv-cookie-auth'] || '')).toLowerCase() === '1';
-        if (shouldSetAuthCookies) {
-            res.setCookie('access_token', accessToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                path: '/',
-                maxAge: ACCESS_TOKEN_TTL
+            res.status(200).send({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+                token_type: "bearer",
+                user
             });
-            res.setCookie('refresh_token', refreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                path: '/',
-                maxAge: REFRESH_TOKEN_TTL
-            });
+        } finally {
+            pgClient.release();
         }
 
         res.status(200).send({

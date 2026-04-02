@@ -65,46 +65,20 @@ export const SessionModel = {
                 throw new BadRequestError('start_date cannot be after end_date');
             }
 
-            const where: any = { status: SESSION_STATUS.ACTIVE };
-
-            if (course_id) where.course_id = course_id;
-            if (instructor_id) where.instructor_id = instructor_id;
-            if (start_date) where.scheduled_end = { gte: new Date(start_date) };
-            if (end_date) where.scheduled_start = { lte: new Date(end_date) };
-
-            const sessions = await prisma.sessions.findMany({
-                where,
-                select: {
-                    id: true,
-                    course_id: true,
-                    name: true,
-                    status: true,
-                    scheduled_start: true,
-                    scheduled_end: true,
-                    checkin_opens_at: true,
-                    checkin_closes_at: true,
-                    venue_name: true,
-                    venue_latitude: true,
-                    venue_longitude: true,
-                    require_liveness_check: true,
-                    require_face_match: true,
-                    courses: {
-                        select: {
-                            code: true
-                        }
-                    }
-                },
-                skip: offset,
-                take: limit
-            });
-            return sessions.map((s: any) => {
-                const course_code = s.courses.code;
-                delete s.courses;
-                return {
-                    ...s,
-                    course_code
-                }
-            });
+            const { rows } = await pgClient.query(
+                `SELECT s.id, s.course_id, s.name, s.status, s.scheduled_start,
+            s.scheduled_end, s.checkin_opens_at, s.checkin_closes_at, s.venue_name,
+            s.venue_latitude, s.venue_longitude, s.require_liveness_check,
+            s.require_face_match, c.code AS course_code
+            FROM sessions s 
+            INNER JOIN courses c 
+            ON s.course_id = c.id 
+            WHERE ${filters.join(' AND ')} 
+            LIMIT $${filters.length + 1}
+            OFFSET $${filters.length + 2}`,
+                [...values, limit, offset]
+            );
+            return rows as ({ course_code: string } & Session)[];
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');

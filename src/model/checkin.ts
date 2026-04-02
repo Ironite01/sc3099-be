@@ -54,25 +54,29 @@ export type Checkin = {
 };
 
 export const CheckinModel = {
-    create: async (prisma: PrismaClient, studentId: string, payload: {
-        ipAddr: string;
-        userAgent?: string;
-        session_id: string;
-        latitude: number;
-        longitude: number;
-        location_accuracy_meters: number;
-        device_fingerprint: string;
-        liveness_challenge_response?: any;
-        face_verification_image?: any;
-        liveness_challenge_type?: LivenessChallengeType;
-        qr_code?: string;
-    }) => {
+    create: async function create(
+        transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>,
+        studentId: string,
+        payload: {
+            ipAddr: string;
+            userAgent?: string;
+            session_id: string;
+            latitude: number;
+            longitude: number;
+            location_accuracy_meters: number;
+            device_fingerprint: string;
+            liveness_challenge_response?: any;
+            face_verification_image?: any;
+            liveness_challenge_type?: LivenessChallengeType;
+            qr_code?: string;
+        }
+    ) {
         try {
             const {
                 session_id,
                 latitude,
                 longitude,
-                location_accuracy_meters = 50,
+                location_accuracy_meters,
                 device_fingerprint,
                 liveness_challenge_response = null,
                 face_verification_image = null,
@@ -81,8 +85,7 @@ export const CheckinModel = {
                 ipAddr,
                 userAgent
             } = payload;
-
-            return await prisma.$transaction(async (tx) => {
+            return await transact(async (pgClient) => {
                 // 1. Validate device
                 let device;
                 try {
@@ -151,10 +154,10 @@ export const CheckinModel = {
                 // 4. Validate enrollment
                 let enrollment;
                 try {
-                    enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(tx as any, studentId, session.course_id);
-                } catch (err) {
+                    enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+                } catch (err: any) {
                     if (err instanceof NotFoundError) {
-                        throw new BadRequestError('Student is not enrolled in the course');
+                        throw new BadRequestError('Student is not enrolled in this course');
                     }
                     throw err;
                 }
@@ -190,34 +193,21 @@ export const CheckinModel = {
 
                 const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
 
-
-                // 6. Liveness check and face verification
                 let status = CHECKIN_STATUS.PENDING;
-                const requireLiveness = session.require_liveness_check === true;
+                const requireLiveness = session.require_liveness_check !== false;
                 const requireFaceMatch = session.require_face_match === true;
 
-                let user;
-                try {
-                    user = await UserModel.getById(tx as any, studentId);
-                } catch (err) {
-                    if (err instanceof NotFoundError) {
-                        throw new BadRequestError('User not found');
-                    }
-                    throw err;
+                // 6. Liveness check and face verification
+                const user = await UserModel.getById(pgClient, studentId);
+                if (!user || !user.is_active) {
+                    throw new BadRequestError('Unable to perform face verification for user');
                 }
-                if (!user || !user.is_active || (requireFaceMatch && !user.face_embedding_hash)) {
+                if (requireFaceMatch && !user.face_embedding_hash) {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
 
-                if ((requireLiveness || requireFaceMatch) && !user.camera_consent) {
-                    throw new BadRequestError('Camera consent is required for biometric verification. Please update your consent settings.');
-                }
-                if (latitude && longitude && !user.geolocation_consent) {
-                    throw new BadRequestError('Geolocation consent is required for check-in. Please update your consent settings.');
-                }
-
-                if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
-                    throw new BadRequestError('Liveness challenge response must be a valid base64 string');
+                if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                    throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
                 }
 
                 const verificationImage = face_verification_image || liveness_challenge_response;
