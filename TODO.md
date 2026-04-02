@@ -55,10 +55,10 @@ qr not tested
 
 ### Devices
 
-#### POST /devices/register
-#### GET /devices/my-devices
-#### DELETE /devices/{device_id}
-#### PATCH /devices/{device_id}
+#### POST /devices/register✅
+#### GET /devices/my-devices✅
+#### DELETE /devices/{device_id}✅
+#### PATCH /devices/{device_id}✅
 
 ### Enrollments
 

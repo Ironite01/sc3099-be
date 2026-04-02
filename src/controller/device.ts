@@ -135,33 +135,26 @@ async function deviceController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
+        const prisma = await fastify.prisma;
         const userId = (req?.user as any).sub;
-        const body: any = req.body;
 
-        const device = await DeviceModel.register(fastify.pg.transact, userId, body);
-
-        const pgClient = await fastify.pg.connect();
-        try {
-            await AuditModel.log(pgClient, {
-                userId: userId,
-                action: AUDIT_ACTIONS.DEVICE_REGISTERED,
-                resourceType,
-                resourceId: device.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                deviceId: device.id,
-                success: true,
-                details: {
-                    device_name: device.device_name,
-                    platform: device.platform,
-                    is_emulator: device.is_emulator,
-                    is_rooted: device.is_rooted_jailbroken
-                }
-            });
-        } finally {
-            pgClient.release();
-        }
-
+        const device = await DeviceModel.register(prisma, userId, req.body as any);
+        await AuditModel.log(await fastify.pg.connect(), {
+            userId: userId,
+            action: AUDIT_ACTIONS.DEVICE_REGISTERED,
+            resourceType,
+            resourceId: device.id,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            deviceId: device.id,
+            success: true,
+            details: {
+                device_name: device.device_name,
+                platform: device.platform,
+                is_emulator: device.is_emulator,
+                is_rooted: device.is_rooted_jailbroken
+            }
+        });
         res.status(201).send({
             id: device.id,
             device_fingerprint: device.device_fingerprint,
@@ -180,27 +173,23 @@ async function deviceController(fastify: FastifyInstance) {
     fastify.get(`${uri}/my-devices`, {
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const userId = (req?.user as any).sub;
-            const devices = await DeviceModel.getByUserId(pgClient, userId);
+        const prisma = await fastify.prisma;
+        const userId = (req?.user as any).sub;
+        const devices = await DeviceModel.getAllByUserId(prisma, userId);
 
-            res.status(200).send(
-                devices.map(device => ({
-                    id: device.id,
-                    device_name: device.device_name,
-                    platform: device.platform,
-                    is_trusted: device.is_trusted,
-                    trust_score: device.trust_score,
-                    is_active: device.is_active,
-                    first_seen_at: device.first_seen_at,
-                    last_seen_at: device.last_seen_at,
-                    total_checkins: device.total_checkins
-                }))
-            );
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send(
+            devices.map(device => ({
+                id: device.id,
+                device_name: device.device_name,
+                platform: device.platform,
+                is_trusted: device.is_trusted,
+                trust_score: device.trust_score,
+                is_active: device.is_active,
+                first_seen_at: device.first_seen_at,
+                last_seen_at: device.last_seen_at,
+                total_checkins: device.total_checkins
+            }))
+        );
     });
 
     // TODO: Update the attestion and trust_score later
@@ -232,10 +221,12 @@ async function deviceController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
+        const prisma = await fastify.prisma;
+
         const deviceId = (req?.params as any).device_id;
         const body: any = req.body;
 
-        const updatedDevice = await DeviceModel.update(fastify.pg.transact, deviceId, req?.user, body);
+        const updatedDevice = await DeviceModel.update(prisma, deviceId, req?.user, body);
 
         res.status(200).send({
             id: updatedDevice.id,
@@ -260,18 +251,14 @@ async function deviceController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const userId = (req?.user as any).sub;
-            const userRole = (req?.user as any).role;
-            const deviceId = (req?.params as any).device_id;
+        const prisma = await fastify.prisma;
+        const userId = (req?.user as any).sub;
+        const userRole = (req?.user as any).role;
+        const deviceId = (req?.params as any).device_id;
 
-            await DeviceModel.delete(pgClient, deviceId, { userId, userRole });
+        await DeviceModel.delete(prisma, deviceId, { userId, userRole });
 
-            res.status(204).send();
-        } finally {
-            pgClient.release();
-        }
+        res.status(204).send();
     });
 }
 
