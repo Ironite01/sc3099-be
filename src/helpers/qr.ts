@@ -1,5 +1,4 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
-import { QR_TTL_SECONDS } from './constants.js';
 
 export function parseQrPayload(rawQr: string): { sessionId: string; exp: number; sig: string } | null {
     try {
@@ -55,9 +54,9 @@ export function buildQrPayload(sessionId: string, secret: string, expiresAt: Dat
     return `${baseUrl}/attendance?sessionId=${sessionId}&exp=${exp}&sig=${sig}`;
 }
 
-export function generateQrSecretAndExpiry() {
+export function generateQrSecretAndExpiry(expiresAt: Date) {
     const qrSecret = randomBytes(24).toString('hex');
-    const qrCodeExpiresAt = new Date(Date.now() + QR_TTL_SECONDS * 1000);
+    const qrCodeExpiresAt = expiresAt;
 
     return {
         qrSecret,

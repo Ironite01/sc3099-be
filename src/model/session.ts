@@ -377,7 +377,7 @@ export const SessionModel = {
             let qr_code_expires_at = null;
 
             if (qr_code_enabled) {
-                const { qrSecret, qrCodeExpiresAt } = generateQrSecretAndExpiry();
+                const { qrSecret, qrCodeExpiresAt } = generateQrSecretAndExpiry(new Date(checkin_closes_at));
                 qr_code_secret = qrSecret;
                 qr_code_expires_at = qrCodeExpiresAt;
             }
@@ -579,12 +579,11 @@ export const SessionModel = {
             throw new BadRequestError('QR codes are not enabled for this session');
         }
 
-        const now = Date.now();
         let qrSecret = session.qr_code_secret;
-        let qrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at) : null;
+        let qrExpiresAt = new Date(session.checkin_closes_at);
 
-        if (!qrSecret || !qrExpiresAt || qrExpiresAt.getTime() <= now) {
-            const nextQr = generateQrSecretAndExpiry();
+        if (!qrSecret) {
+            const nextQr = generateQrSecretAndExpiry(new Date(session.checkin_closes_at));
             qrSecret = nextQr.qrSecret;
             qrExpiresAt = nextQr.qrCodeExpiresAt;
 
@@ -608,7 +607,7 @@ export const SessionModel = {
 
         const qrPayload = buildQrPayload(id, qrSecret, qrExpiresAt);
         const qrCode = await QRCode.toDataURL(qrPayload);
-        const ttlSeconds = Math.max(0, Math.floor((qrExpiresAt.getTime() - now) / 1000));
+        const ttlSeconds = Math.max(0, Math.floor((qrExpiresAt.getTime() - Date.now()) / 1000));
 
         return {
             qr_payload: qrPayload,
