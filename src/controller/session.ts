@@ -27,15 +27,10 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { limit = 50, offset = 0 } = (req.query) as any;
-            const { items, total } = await SessionModel.getAllFilteredSessions(pgClient, req.query as any);
-
-            res.status(200).send({ items, total, limit, offset });
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        const { limit = 50, offset = 0 } = (req.query) as any;
+        const { items, total } = await SessionModel.getAllFilteredSessions(prisma, req.user as any, req.query as any);
+        res.status(200).send({ items, total, limit, offset });
     });
 
     fastify.get(`${uri}/active`, {
@@ -55,26 +50,22 @@ async function sessionController(fastify: any) {
         preHandler: [fastify.rateLimit()]
     },
         async (req: FastifyRequest, res: FastifyReply) => {
-            const pgClient = await fastify.pg.connect();
-            try {
-                // We assume that this API may have some filters
-                const queryStrings = req?.query as any;
-                const sessions = await SessionModel.getActiveSessions(pgClient, queryStrings);
-                res.status(200).send(sessions.map(s => ({
-                    id: s.id,
-                    course_id: s.course_id,
-                    course_code: s.course_code,
-                    name: s.name,
-                    status: s.status,
-                    scheduled_start: s.scheduled_start,
-                    scheduled_end: s.scheduled_end,
-                    checkin_opens_at: s.checkin_opens_at,
-                    checkin_closes_at: s.checkin_closes_at,
-                    venue_name: s.venue_name
-                })));
-            } finally {
-                pgClient.release();
-            }
+            const prisma = await fastify.prisma;
+            // We assume that this API may have some filters
+            const queryStrings = req?.query as any;
+            const sessions = await SessionModel.getActiveSessions(prisma, queryStrings);
+            res.status(200).send(sessions.map(s => ({
+                id: s.id,
+                course_id: s.course_id,
+                course_code: s.course_code,
+                name: s.name,
+                status: s.status,
+                scheduled_start: s.scheduled_start,
+                scheduled_end: s.scheduled_end,
+                checkin_opens_at: s.checkin_opens_at,
+                checkin_closes_at: s.checkin_closes_at,
+                venue_name: s.venue_name
+            })));
         });
 
     fastify.get(`${uri}/my-sessions`, {
@@ -90,15 +81,11 @@ async function sessionController(fastify: any) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const user = req.user as any;
-            const sessions = await SessionModel.getFilteredSessionsByUser(pgClient, user, req.query as any);
+        const prisma = await fastify.prisma;
+        const user = req.user as any;
+        const sessions = await SessionModel.getFilteredSessionsByUser(prisma, user, req.query as any);
 
-            res.status(200).send(sessions);
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send(sessions);
     });
 
     fastify.get(`${uri}/:session_id`, {
@@ -110,14 +97,10 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const userRole = (req.user as any)?.role;
-            const session = await SessionModel.findById(pgClient, userRole, (req.params as any).session_id);
-            res.status(200).send(session);
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        const userRole = (req.user as any)?.role;
+        const session = await SessionModel.findById(prisma, userRole, (req.params as any).session_id);
+        res.status(200).send(session);
     });
 
     fastify.post(`${uri}/`, {
@@ -148,34 +131,30 @@ async function sessionController(fastify: any) {
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
         // In this endpoint, we also allow TA since there is a relation with them and sessions.
-        const pgClient = await fastify.pg.connect();
-        try {
-            const user = req.user as any;
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
-                (req.body as any).instructor_id = user.sub;
-            }
-            const session = await SessionModel.create(pgClient, req.body as any);
-
-            await AuditModel.log(pgClient, {
-                userId: user.sub,
-                action: AUDIT_ACTIONS.SESSION_CREATED,
-                resourceType,
-                resourceId: session.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                deviceId: '',
-                success: true,
-                details: {
-                    course_id: session.course_id,
-                    session_name: session.name,
-                    scheduled_start: session.scheduled_start
-                }
-            });
-
-            res.status(201).send(session);
-        } finally {
-            pgClient.release();
+        const prisma = await fastify.prisma;
+        const user = req.user as any;
+        if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
+            (req.body as any).instructor_id = user.sub;
         }
+        const session = await SessionModel.create(prisma, req.body as any);
+
+        await AuditModel.log(await fastify.pg.connect(), {
+            userId: user.sub,
+            action: AUDIT_ACTIONS.SESSION_CREATED,
+            resourceType,
+            resourceId: session.id,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            deviceId: '',
+            success: true,
+            details: {
+                course_id: session.course_id,
+                session_name: session.name,
+                scheduled_start: session.scheduled_start
+            }
+        });
+
+        res.status(201).send(session);
     });
 
     fastify.patch(`${uri}/:session_id`, {
@@ -207,40 +186,25 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const user = req.user as any;
-            const session = await SessionModel.update(pgClient, user, (req.params as any).session_id, req.body as any);
-            if (!session) {
-                res.status(404).send({ detail: 'Session not found' });
-                return;
-            }
+        const prisma = await fastify.prisma;
+        const user = req.user as any;
+        const session = await SessionModel.update(prisma, user, (req.params as any).session_id, req.body as any);
 
-            await AuditModel.log(pgClient, {
-                userId: user.sub,
-                action: AUDIT_ACTIONS.SESSION_UPDATED,
-                resourceType,
-                resourceId: session.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                success: true,
-                details: {
-                    updated_fields: Object.keys(req.body as any),
-                    session_name: session.name
-                }
-            });
-
-            res.status(200).send(session);
-        } catch (err: any) {
-            if (err.message === 'No valid fields to update') {
-                res.status(400).send({ detail: err.message });
-            } else {
-                console.error('Error updating session:', err.message);
-                res.status(500).send({ detail: err.message });
+        await AuditModel.log(await fastify.pg.connect(), {
+            userId: user.sub,
+            action: AUDIT_ACTIONS.SESSION_UPDATED,
+            resourceType,
+            resourceId: session.id,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            success: true,
+            details: {
+                updated_fields: Object.keys(req.body as any),
+                session_name: session.name
             }
-        } finally {
-            pgClient.release();
-        }
+        });
+
+        res.status(200).send(session);
     });
 
     fastify.delete(`${uri}/:session_id`, {
@@ -252,30 +216,27 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const user = req.user as any;
-            const session = await SessionModel.delete(pgClient, user, (req.params as any).session_id);
+        const prisma = await fastify.prisma;
+        const user = req.user as any;
+        const session = await SessionModel.delete(prisma, user, (req.params as any).session_id);
 
-            await AuditModel.log(pgClient, {
-                userId: user.sub,
-                action: AUDIT_ACTIONS.SESSION_DELETED,
-                resourceType,
-                resourceId: session.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                deviceId: '',
-                success: true,
-                details: {
-                    course_id: session.course_id,
-                    session_name: session.name
-                }
-            });
-            res.status(204).send();
-        } finally {
-            pgClient.release();
-        }
+        await AuditModel.log(await fastify.pg.connect(), {
+            userId: user.sub,
+            action: AUDIT_ACTIONS.SESSION_DELETED,
+            resourceType,
+            resourceId: session.id,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            deviceId: '',
+            success: true,
+            details: {
+                course_id: session.course_id,
+                session_name: session.name
+            }
+        });
+        res.status(204).send();
     });
+
     fastify.get(`${uri}/:id/qr`, {
         schema: {
             params: {
@@ -288,24 +249,9 @@ async function sessionController(fastify: any) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const qrPayload = await SessionModel.issueQr(pgClient, req.params.id);
-            res.status(200).send(qrPayload);
-        } catch (err: any) {
-            if (err?.message === 'QR codes can only be issued for active sessions') {
-                res.status(400).send({ detail: err.message });
-            } else if (err?.message === 'QR codes are not enabled for this session') {
-                res.status(400).send({ detail: err.message });
-            } else if (err?.statusCode === 404) {
-                res.status(404).send({ detail: 'Session not found' });
-            } else {
-                console.error('Error generating session QR:', err.message);
-                res.status(500).send({ detail: err.message || 'Failed to generate QR code' });
-            }
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        const qrPayload = await SessionModel.issueQr(prisma, req.params.id);
+        res.status(200).send(qrPayload);
     });
 }
 

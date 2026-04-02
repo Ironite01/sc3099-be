@@ -13,7 +13,7 @@
 #### GET /users/✅
 #### GET /users/{user_id}✅
 #### PATCH /users/{user_id}✅
-#### POST /users/me/face/enroll
+#### POST /users/me/face/enroll - not tested yet
 
 ### Courses
 
@@ -25,13 +25,15 @@
 
 ### Sessions
 
-#### GET /sessions/
-#### GET /sessions/active
-#### GET /sessions/my-sessions
-#### GET /sessions/{session_id}
-#### POST /sessions/
-#### PATCH /sessions/{session_id}
-#### DELETE /sessions/{session_id}
+#### GET /sessions/✅
+#### GET /sessions/active✅
+#### GET /sessions/my-sessions✅
+#### GET /sessions/{session_id}✅
+#### POST /sessions/✅
+#### PATCH /sessions/{session_id}✅
+#### DELETE /sessions/{session_id}✅
+
+qr not tested
 
 ### Check-ins
 

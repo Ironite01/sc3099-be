@@ -1,8 +1,11 @@
-import { NotFoundError, BadRequestError, AppError } from './error.js';
-import type { PoolClient } from 'pg';
+import { randomUUID } from 'crypto';
+import type { PrismaClient, sessions as Session } from '../generated/prisma/client.js';
+import { NotFoundError, BadRequestError, AppError, ForbiddenError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 import { buildQrPayload, generateQrSecretAndExpiry } from '../helpers/qr.js';
+import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
 import QRCode from 'qrcode';
+import { CourseModel } from './course.js';
 
 export enum SESSION_STATUS {
     SCHEDULED = 'scheduled',
@@ -18,33 +21,7 @@ export enum SESSION_TYPE {
     OTHER = 'other'
 }
 
-export type Session = {
-    id: string;
-    course_id: string;
-    instructor_id: string | null;
-    name: string;
-    session_type: SESSION_TYPE;
-    description?: string;
-    scheduled_start: Date;
-    scheduled_end: Date;
-    checkin_opens_at: Date;
-    checkin_closes_at: Date;
-    status: SESSION_STATUS;
-    actual_start?: Date | null;
-    actual_end?: Date | null;
-    venue_latitude?: number | null;
-    venue_longitude?: number | null;
-    venue_name?: string | null;
-    geofence_radius_meters?: number | null;
-    require_liveness_check?: boolean;
-    require_face_match?: boolean;
-    risk_threshold?: number | null;
-    qr_code_enabled?: boolean;
-    qr_code_secret?: string | null;
-    qr_code_expires_at?: Date | null;
-    created_at: Date;
-    updated_at: Date;
-};
+export type { Session };
 
 export type SessionQrPayload = {
     qr_payload: string;
@@ -54,255 +31,378 @@ export type SessionQrPayload = {
 };
 
 export const SessionModel = {
-    getById: async function (pgClient: any, id: string): Promise<Session> {
+    getById: async (prisma: PrismaClient, id: string): Promise<Session> => {
         try {
-            const { rows } = await pgClient.query(
-                `SELECT * FROM sessions WHERE id = $1`,
-                [id]
-            );
-            if (rows.length === 0) {
+            return await prisma.sessions.findUniqueOrThrow({
+                where: { id }
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
                 throw new NotFoundError();
             }
-            return rows[0] as Session;
-        } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getActiveSessions: async function (pgClient: any, params: {
+    getActiveSessions: async (prisma: PrismaClient, params: {
         course_id?: string,
         instructor_id?: string,
         start_date?: string,
         end_date?: string,
         limit: number,
         offset: number
-    }): Promise<(Session & { course_code: string })[]> {
+    }) => {
         try {
             const { course_id, instructor_id, start_date, end_date, limit, offset } = params;
 
-            const filters: string[] = ['status = $1'];
-            const values: any[] = [SESSION_STATUS.ACTIVE];
-
-            if (course_id) {
-                filters.push(`course_id = $${filters.length + 1}`);
-                values.push(course_id);
+            if (start_date && isNaN(Date.parse(start_date))) {
+                throw new BadRequestError('Invalid start_date format');
             }
-            if (instructor_id) {
-                filters.push(`instructor_id = $${filters.length + 1}`);
-                values.push(instructor_id);
-            }
-            if (start_date) {
-                if (isNaN(Date.parse(start_date))) {
-                    throw new BadRequestError('Invalid start_date format');
-                }
-                filters.push(`scheduled_end >= $${filters.length + 1}`);
-                values.push(start_date);
-            }
-            if (end_date) {
-                if (isNaN(Date.parse(end_date))) {
-                    throw new BadRequestError('Invalid end_date format');
-                }
-                filters.push(`scheduled_start <= $${filters.length + 1}`);
-                values.push(end_date);
+            if (end_date && isNaN(Date.parse(end_date))) {
+                throw new BadRequestError('Invalid end_date format');
             }
             if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
                 throw new BadRequestError('start_date cannot be after end_date');
             }
 
-            const { rows } = await pgClient.query(
-                `SELECT s.id, s.course_id, s.name, s.status, s.scheduled_start,
-            s.scheduled_end, s.checkin_opens_at, s.checkin_closes_at, s.venue_name,
-            s.venue_latitude, s.venue_longitude, c.code AS course_code
-            FROM sessions s 
-            INNER JOIN courses c 
-            ON s.course_id = c.id 
-            WHERE ${filters.join(' AND ')} 
-            LIMIT $${filters.length + 1}
-            OFFSET $${filters.length + 2}`,
-                [...values, limit, offset]
-            );
-            return rows as ({ course_code: string } & Session)[];
+            const where: any = { status: SESSION_STATUS.ACTIVE };
+
+            if (course_id) where.course_id = course_id;
+            if (instructor_id) where.instructor_id = instructor_id;
+            if (start_date) where.scheduled_end = { gte: new Date(start_date) };
+            if (end_date) where.scheduled_start = { lte: new Date(end_date) };
+
+            const sessions = await prisma.sessions.findMany({
+                where,
+                select: {
+                    id: true,
+                    course_id: true,
+                    name: true,
+                    status: true,
+                    scheduled_start: true,
+                    scheduled_end: true,
+                    checkin_opens_at: true,
+                    checkin_closes_at: true,
+                    venue_name: true,
+                    venue_latitude: true,
+                    venue_longitude: true,
+                    courses: {
+                        select: {
+                            code: true
+                        }
+                    }
+                },
+                skip: offset,
+                take: limit
+            });
+            return sessions.map((s: any) => {
+                const course_code = s.courses.code;
+                delete s.courses;
+                return {
+                    ...s,
+                    course_code
+                }
+            });
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getAllFilteredSessions: async function (pgClient: any, filters: any): Promise<{ items: any[], total: number }> {
+    getAllFilteredSessions: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, filters: any): Promise<{ items: any[], total: number }> => {
         try {
             const { status, course_id, instructor_id, start_date, end_date, limit = 50, offset = 0 } = filters;
+            const userId = user.sub;
+            const role = user.role;
 
-            let query = `
-            WITH enroll_counts AS (
-                SELECT e.course_id, COUNT(*)::int AS total_enrolled
-                FROM enrollments e
-                WHERE e.is_active = TRUE
-                GROUP BY e.course_id
-            ),
-            checkin_counts AS (
-                SELECT ch.session_id, COUNT(*)::int AS checked_in_count
-                FROM checkins ch
-                GROUP BY ch.session_id
-            )
-            SELECT s.*, c.code as course_code, c.name as course_name,
-                   u.full_name as instructor_name,
-                   COALESCE(ec.total_enrolled, 0) as total_enrolled,
-                   COALESCE(cc.checked_in_count, 0) as checked_in_count
-            FROM sessions s
-            LEFT JOIN courses c ON s.course_id = c.id
-            LEFT JOIN users u ON s.instructor_id = u.id
-            LEFT JOIN enroll_counts ec ON ec.course_id = s.course_id
-            LEFT JOIN checkin_counts cc ON cc.session_id = s.id
-            WHERE 1=1
-        `;
-            const params: any[] = [];
-            let paramIndex = 1;
+            const where: any = {};
 
-            if (status) {
-                query += ` AND s.status = $${paramIndex++}`;
-                params.push(status);
-            }
-            if (course_id) {
-                query += ` AND s.course_id = $${paramIndex++}`;
-                params.push(course_id);
-            }
-            if (instructor_id) {
-                query += ` AND s.instructor_id = $${paramIndex++}`;
-                params.push(instructor_id);
-            }
-            if (start_date) {
-                query += ` AND s.scheduled_start >= $${paramIndex++}`;
-                params.push(start_date);
-            }
-            if (end_date) {
-                query += ` AND s.scheduled_start <= $${paramIndex++}`;
-                params.push(end_date);
+            if (status) where.status = status;
+            if (start_date) where.scheduled_start = { gte: new Date(start_date) };
+            if (end_date) where.scheduled_start = { lte: new Date(end_date) };
+
+            // Role-based authorization
+            if (role === USER_ROLE_TYPES.INSTRUCTOR) {
+                // Instructors see sessions in courses they teach OR sessions they teach directly
+                where.OR = [
+                    {
+                        courses: {
+                            is: {
+                                instructor_id: userId
+                            }
+                        }
+                    },
+                    {
+                        instructor_id: userId
+                    }
+                ];
+            } else if (role === USER_ROLE_TYPES.TA) {
+                // TAs see only sessions they teach
+                where.instructor_id = userId;
+            } else if (role !== USER_ROLE_TYPES.ADMIN) {
+                // Students can't access this endpoint
+                throw new ForbiddenError('Insufficient permissions');
             }
 
-            query += ` ORDER BY s.scheduled_start DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-            params.push(limit, offset);
+            if (course_id) where.course_id = course_id;
+            if (instructor_id && role === USER_ROLE_TYPES.ADMIN) where.instructor_id = instructor_id;
 
-            const result = await pgClient.query(query, params);
+            const [sessions, total] = await prisma.$transaction([
+                prisma.sessions.findMany({
+                    where,
+                    select: {
+                        id: true,
+                        course_id: true,
+                        instructor_id: true,
+                        name: true,
+                        status: true,
+                        scheduled_start: true,
+                        courses: {
+                            select: {
+                                _count: {
+                                    select: {
+                                        enrollments: {
+                                            where: { is_active: true }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        users: {
+                            select: {
+                                full_name: true
+                            }
+                        },
+                        _count: {
+                            select: {
+                                checkins: true
+                            }
+                        }
+                    },
+                    orderBy: { scheduled_start: 'desc' },
+                    skip: offset,
+                    take: limit
+                }),
+                prisma.sessions.count({ where })
+            ]);
 
-            let countQuery = 'SELECT COUNT(*) FROM sessions s WHERE 1=1';
-            const countParams: any[] = [];
-            let countParamIndex = 1;
-            if (status) {
-                countQuery += ` AND s.status = $${countParamIndex++}`;
-                countParams.push(status);
-            }
-            if (course_id) {
-                countQuery += ` AND s.course_id = $${countParamIndex++}`;
-                countParams.push(course_id);
-            }
-            if (instructor_id) {
-                countQuery += ` AND s.instructor_id = $${countParamIndex++}`;
-                countParams.push(instructor_id);
-            }
-            if (start_date) {
-                countQuery += ` AND s.scheduled_start >= $${countParamIndex++}`;
-                countParams.push(start_date);
-            }
-            if (end_date) {
-                countQuery += ` AND s.scheduled_start <= $${countParamIndex++}`;
-                countParams.push(end_date);
-            }
-            const countResult = await pgClient.query(countQuery, countParams);
-            const total = parseInt(countResult.rows[0].count);
+            const items = sessions.map((s: any) => {
+                const course_code = s.courses?.code;
+                const course_name = s.courses?.name;
+                const total_enrolled = s.courses?._count?.enrollments ?? 0;
+                const instructor_name = s.users?.full_name;
+                const checked_in_count = s._count?.checkins ?? 0;
+                delete s.courses;
+                delete s.users;
+                delete s._count;
+                return {
+                    ...s,
+                    course_code,
+                    course_name,
+                    instructor_name,
+                    total_enrolled,
+                    checked_in_count
+                }
+            });
 
-            return { items: result.rows as Session[], total };
+            return { items, total };
         } catch (err: any) {
+            console.error('Error in getAllFilteredSessions:', err);
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getFilteredSessionsByUser: async function (pgClient: any, user: { sub: string, role: USER_ROLE_TYPES }, { status, upcoming, limit = 50, session_id }: { status?: string, upcoming?: boolean, limit?: number, session_id?: string }): Promise<Session[]> {
+    getFilteredSessionsByUser: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, { status, upcoming, limit = 50, session_id }: { status?: string, upcoming?: boolean, limit?: number, session_id?: string }): Promise<Session[]> => {
         try {
-            const params: any[] = [];
-            const where: string[] = [];
+            const userId = user.sub;
+            const role = user.role;
+            const safeLimit = Math.max(1, Math.min(limit || 50, 200));
 
-            const userId = user?.sub as string;
-            const role = user?.role as USER_ROLE_TYPES;
+            const where: any = {};
 
             if (role === USER_ROLE_TYPES.STUDENT) {
-                params.push(userId);
-                where.push(`EXISTS (
-                    SELECT 1 FROM enrollments e
-                    WHERE e.course_id = s.course_id
-                      AND e.student_id = $${params.length}
-                      AND e.is_active = TRUE
-                )`);
-            } else if (role === USER_ROLE_TYPES.ADMIN) {
-                // Admin sees all sessions - no filter needed
-            } else {
-                // Instructor/TA sees only their own sessions
-                params.push(userId);
-                where.push(`s.instructor_id = $${params.length}`);
+                where.enrollments = {
+                    some: {
+                        student_id: userId,
+                        is_active: true
+                    }
+                };
+            } else if (role === USER_ROLE_TYPES.INSTRUCTOR) {
+                // Instructors see sessions in courses they teach OR sessions they teach directly
+                where.OR = [
+                    {
+                        courses: {
+                            is: {
+                                instructor_id: userId
+                            }
+                        }
+                    },
+                    {
+                        instructor_id: userId
+                    }
+                ];
+            } else if (role === USER_ROLE_TYPES.TA) {
+                // TAs see only sessions they teach
+                where.instructor_id = userId;
             }
 
-            if (status) {
-                params.push(status);
-                where.push(`s.status = $${params.length}`);
-            }
+            if (status) where.status = status;
+            if (upcoming) where.scheduled_start = { gte: new Date() };
+            if (session_id) where.id = session_id;
 
-            if (upcoming) {
-                where.push('s.scheduled_start >= NOW()');
-            }
+            const sessions = await prisma.sessions.findMany({
+                where,
+                select: {
+                    id: true,
+                    course_id: true,
+                    name: true,
+                    status: true,
+                    scheduled_start: true,
+                    scheduled_end: true,
+                    checkin_opens_at: true,
+                    checkin_closes_at: true,
+                    venue_name: true,
+                    venue_latitude: true,
+                    venue_longitude: true,
+                    geofence_radius_meters: true,
+                    require_liveness_check: true,
+                    require_face_match: true,
+                    risk_threshold: true,
+                    qr_code_enabled: true,
+                    courses: {
+                        select: {
+                            code: true,
+                            name: true
+                        }
+                    },
+                    users: {
+                        select: {
+                            full_name: true
+                        }
+                    }
+                },
+                orderBy: { scheduled_start: 'asc' },
+                take: safeLimit
+            });
 
-            if (session_id) {
-                params.push(session_id);
-                where.push(`s.id = $${params.length}`);
-            }
-
-            params.push(Math.max(1, Math.min(limit, 200)));
-
-            const query = `
-                SELECT s.*, c.code AS course_code, c.name AS course_name,
-                       u.full_name AS instructor_name
-                FROM sessions s
-                JOIN courses c ON c.id = s.course_id
-                LEFT JOIN users u ON u.id = s.instructor_id
-                ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-                ORDER BY s.scheduled_start ASC
-                LIMIT $${params.length}
-            `;
-
-            const result = await pgClient.query(query, params);
-            return result.rows as Session[];
+            return sessions.map((s: any) => {
+                const course_code = s.courses.code;
+                const course_name = s.courses.name;
+                const instructor_name = s.users?.full_name;
+                delete s.courses;
+                delete s.users;
+                return {
+                    ...s,
+                    course_code,
+                    course_name,
+                    instructor_name
+                }
+            })
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    findById: async function (pgClient: any, userRole: USER_ROLE_TYPES, id: string): Promise<any | null> {
+    findById: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, id: string): Promise<any | null> => {
         try {
-            const { rows } = await pgClient.query(`
-            SELECT s.*, c.code as course_code, c.name as course_name,
-                   u.full_name as instructor_name
-            FROM sessions s
-            LEFT JOIN courses c ON s.course_id = c.id
-            LEFT JOIN users u ON s.instructor_id = u.id
-            WHERE s.id = $1
-        `, [id]);
+            const userId = user.sub;
+            const role = user.role;
 
-            if (rows.length === 0) {
-                throw new NotFoundError();
+            let where: any = { id };
+            if (role === USER_ROLE_TYPES.STUDENT) {
+                where.enrollments = {
+                    some: {
+                        student_id: userId,
+                        is_active: true
+                    }
+                };
+            } else if (role === USER_ROLE_TYPES.INSTRUCTOR) {
+                // Instructors can see sessions in courses they teach OR sessions they teach directly
+                where.AND = [
+                    { id },
+                    {
+                        OR: [
+                            {
+                                courses: {
+                                    is: {
+                                        instructor_id: userId
+                                    }
+                                }
+                            },
+                            {
+                                instructor_id: userId
+                            }
+                        ]
+                    }
+                ];
+            } else if (role === USER_ROLE_TYPES.TA) {
+                where.instructor_id = userId;
             }
-            const data: any = rows[0] as Session & { course_code: string, course_name: string, instructor_name: string };
 
-            // Session detail should remain read-only. QR issuance is handled
-            // explicitly through the dedicated session QR endpoint.
-            delete data.qr_code_secret;
-            delete data.qr_code_expires_at;
+            const session = await prisma.sessions.findUniqueOrThrow({
+                where,
+                select: {
+                    id: true,
+                    course_id: true,
+                    instructor_id: true,
+                    name: true,
+                    session_type: true,
+                    description: true,
+                    scheduled_start: true,
+                    scheduled_end: true,
+                    checkin_opens_at: true,
+                    checkin_closes_at: true,
+                    status: true,
+                    actual_start: true,
+                    actual_end: true,
+                    venue_latitude: true,
+                    venue_longitude: true,
+                    venue_name: true,
+                    geofence_radius_meters: true,
+                    require_liveness_check: true,
+                    require_face_match: true,
+                    risk_threshold: true,
+                    qr_code_enabled: true,
+                    created_at: true,
+                    updated_at: true,
+                    courses: {
+                        select: {
+                            code: true,
+                            name: true
+                        }
+                    },
+                    users: {
+                        select: {
+                            full_name: true
+                        }
+                    }
+                }
+            });
+
+            const data: any = {
+                ...session,
+                course_code: session.courses.code,
+                course_name: session.courses.name,
+                instructor_name: session.users?.full_name
+            };
+
+            delete data.courses;
+            delete data.users;
+
+            delete (data as any).qr_code_secret;
+            delete (data as any).qr_code_expires_at;
 
             return data;
         } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError();
+            }
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    create: async function (pgClient: PoolClient, payload: {
+    create: async (prisma: PrismaClient, payload: {
         course_id: string;
-        instructor_id?: string;
+        instructor_id: string;
         name: string;
         session_type?: SESSION_TYPE;
         description?: string;
@@ -319,30 +419,13 @@ export const SessionModel = {
         require_face_match?: boolean;
         risk_threshold?: number;
         qr_code_enabled?: boolean;
-    }) {
+    }) => {
         try {
-            const {
-                course_id,
-                instructor_id,
-                name,
-                session_type,
-                description,
-                scheduled_start,
-                scheduled_end,
-                status,
-                venue_latitude,
-                venue_longitude,
-                venue_name,
-                geofence_radius_meters,
-                require_liveness_check,
-                require_face_match,
-                risk_threshold,
-                qr_code_enabled = false
-            } = payload;
+            const { instructor_id, course_id, name, scheduled_start, scheduled_end } = payload;
             let checkin_opens_at = payload?.checkin_opens_at ? new Date(payload.checkin_opens_at) : null;
             let checkin_closes_at = payload?.checkin_closes_at ? new Date(payload.checkin_closes_at) : null;
 
-            if (!course_id || !name || !scheduled_start || !scheduled_end) {
+            if (!course_id || !name || !scheduled_start || !scheduled_end || !instructor_id) {
                 throw new BadRequestError('Missing required session fields');
             }
 
@@ -365,7 +448,6 @@ export const SessionModel = {
                 }
             }
 
-            // Default values...
             if (!checkin_closes_at) {
                 checkin_closes_at = new Date(new Date(scheduled_start).getTime() + 30 * 60 * 1000);
             }
@@ -376,54 +458,70 @@ export const SessionModel = {
             let qr_code_secret = null;
             let qr_code_expires_at = null;
 
-            if (qr_code_enabled) {
+            if (payload.qr_code_enabled) {
                 const { qrSecret, qrCodeExpiresAt } = generateQrSecretAndExpiry();
                 qr_code_secret = qrSecret;
                 qr_code_expires_at = qrCodeExpiresAt;
             }
 
-            const res = await pgClient.query(
-                `INSERT INTO sessions (
-                id, course_id, instructor_id, name, session_type, description,
-                scheduled_start, scheduled_end, checkin_opens_at, checkin_closes_at,
-                status, venue_latitude, venue_longitude, venue_name,
-                geofence_radius_meters, require_liveness_check, require_face_match,
-                risk_threshold, qr_code_enabled, qr_code_secret, qr_code_expires_at,
-                created_at, updated_at
-            ) VALUES (gen_random_uuid()::text,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-            RETURNING *`,
-                [
+            return await prisma.sessions.create({
+                data: {
+                    id: randomUUID(),
                     course_id,
                     instructor_id,
                     name,
-                    session_type || SESSION_TYPE.OTHER,
-                    description,
+                    session_type: payload.session_type || SESSION_TYPE.OTHER,
+                    ...(payload.description !== undefined && { description: payload.description }),
                     scheduled_start,
                     scheduled_end,
                     checkin_opens_at,
                     checkin_closes_at,
-                    status || SESSION_STATUS.SCHEDULED,
-                    venue_latitude,
-                    venue_longitude,
-                    venue_name,
-                    geofence_radius_meters,
-                    require_liveness_check,
-                    require_face_match,
-                    risk_threshold,
-                    qr_code_enabled,
+                    status: payload.status || SESSION_STATUS.SCHEDULED,
+                    ...(payload.venue_latitude !== undefined && { venue_latitude: payload.venue_latitude }),
+                    ...(payload.venue_longitude !== undefined && { venue_longitude: payload.venue_longitude }),
+                    ...(payload.venue_name !== undefined && { venue_name: payload.venue_name }),
+                    ...(payload.geofence_radius_meters !== undefined && { geofence_radius_meters: payload.geofence_radius_meters }),
+                    ...(payload.require_liveness_check !== undefined && { require_liveness_check: payload.require_liveness_check }),
+                    ...(payload.require_face_match !== undefined && { require_face_match: payload.require_face_match }),
+                    ...(payload.risk_threshold !== undefined && { risk_threshold: payload.risk_threshold }),
+                    qr_code_enabled: payload.qr_code_enabled || false,
                     qr_code_secret,
                     qr_code_expires_at,
-                    now,
-                    now
-                ]
-            );
-            return res.rows[0] as Session;
+                    created_at: now,
+                    updated_at: now
+                },
+                select: {
+                    id: true,
+                    course_id: true,
+                    instructor_id: true,
+                    name: true,
+                    session_type: true,
+                    description: true,
+                    scheduled_start: true,
+                    scheduled_end: true,
+                    checkin_opens_at: true,
+                    checkin_closes_at: true,
+                    status: true,
+                    actual_start: true,
+                    actual_end: true,
+                    venue_latitude: true,
+                    venue_longitude: true,
+                    venue_name: true,
+                    geofence_radius_meters: true,
+                    require_liveness_check: true,
+                    require_face_match: true,
+                    risk_threshold: true,
+                    qr_code_enabled: true,
+                    created_at: true,
+                    updated_at: true
+                }
+            });
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    update: async function (pgClient: any, user: { sub: string, role: USER_ROLE_TYPES }, id: string, data: {
+    update: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, id: string, data: {
         name?: string;
         description?: string;
         status?: SESSION_STATUS;
@@ -439,13 +537,17 @@ export const SessionModel = {
         require_face_match?: boolean;
         risk_threshold?: number | null;
         qr_code_enabled?: boolean;
-    }): Promise<Session | null> {
+    }) => {
         try {
-            const getSessionRes = await this.getFilteredSessionsByUser(pgClient, user, { limit: 1, session_id: id });
-            if (getSessionRes.length === 0) {
-                throw new NotFoundError();
+            if (Object.keys(data).length === 0) {
+                throw new BadRequestError('No fields to update');
             }
-            const currentSession = getSessionRes[0]!;
+
+            const currentSession = await prisma.sessions.findUniqueOrThrow({
+                where: { id },
+                select: { status: true, instructor_id: true }
+            });
+
             if (currentSession.status === SESSION_STATUS.CANCELLED) {
                 throw new BadRequestError('Cannot update a cancelled session');
             }
@@ -460,161 +562,192 @@ export const SessionModel = {
 
                 const allowedNextStatuses = validTransitions[currentSession.status];
                 if (!allowedNextStatuses.includes(data.status)) {
+                    console.log("TEST")
                     throw new BadRequestError(`Cannot transition from ${currentSession.status} to ${data.status}`);
                 }
             }
-            const fields: string[] = [];
-            const values: any[] = [];
-            let paramIndex = 1;
 
-            const UPDATABLE_FIELDS = [
-                'name', 'description', 'status', 'scheduled_start', 'scheduled_end',
-                'checkin_opens_at', 'checkin_closes_at', 'venue_name', 'venue_latitude',
-                'venue_longitude', 'geofence_radius_meters', 'require_liveness_check',
-                'require_face_match', 'risk_threshold', 'qr_code_enabled'
-            ];
-
-            for (const field of UPDATABLE_FIELDS) {
-                if ((data as any)[field] !== undefined) {
-                    fields.push(`${field} = $${paramIndex++}`);
-                    values.push((data as any)[field]);
-                }
+            const where: any = { id };
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
+                where.instructor_id = user.sub;
             }
+
+            const updateData: any = {
+                updated_at: new Date()
+            };
+
+            if (data.name !== undefined) updateData.name = data.name;
+            if (data.description !== undefined) updateData.description = data.description;
+            if (data.status !== undefined) updateData.status = data.status;
+            if (data.scheduled_start !== undefined) updateData.scheduled_start = data.scheduled_start;
+            if (data.scheduled_end !== undefined) updateData.scheduled_end = data.scheduled_end;
+            if (data.checkin_opens_at !== undefined) updateData.checkin_opens_at = data.checkin_opens_at;
+            if (data.checkin_closes_at !== undefined) updateData.checkin_closes_at = data.checkin_closes_at;
+            if (data.venue_name !== undefined) updateData.venue_name = data.venue_name;
+            if (data.venue_latitude !== undefined) updateData.venue_latitude = data.venue_latitude;
+            if (data.venue_longitude !== undefined) updateData.venue_longitude = data.venue_longitude;
+            if (data.geofence_radius_meters !== undefined) updateData.geofence_radius_meters = data.geofence_radius_meters;
+            if (data.require_liveness_check !== undefined) updateData.require_liveness_check = data.require_liveness_check;
+            if (data.require_face_match !== undefined) updateData.require_face_match = data.require_face_match;
+            if (data.risk_threshold !== undefined) updateData.risk_threshold = data.risk_threshold;
+            if (data.qr_code_enabled !== undefined) updateData.qr_code_enabled = data.qr_code_enabled;
 
             if (data.qr_code_enabled === false) {
-                fields.push(`qr_code_secret = $${paramIndex++}`);
-                values.push(null);
-                fields.push(`qr_code_expires_at = $${paramIndex++}`);
-                values.push(null);
+                updateData.qr_code_secret = null;
+                updateData.qr_code_expires_at = null;
             }
 
-            if (fields.length === 0) {
-                throw new Error('No valid fields to update');
-            }
-
-            fields.push('updated_at = NOW()');
-            values.push(id);
-
-            let query = `UPDATE sessions SET ${fields.join(', ')} WHERE id = $${paramIndex}`;
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
-                query += ` AND instructor_id = $${paramIndex + 1}`;
-                values.push(user.sub);
-            }
-            query += ' RETURNING *';
-
-            const { rows } = await pgClient.query(query, values);
-
-            if (rows.length === 0) {
+            return await prisma.sessions.update({
+                where,
+                data: updateData,
+                select: {
+                    id: true,
+                    course_id: true,
+                    instructor_id: true,
+                    name: true,
+                    session_type: true,
+                    description: true,
+                    scheduled_start: true,
+                    scheduled_end: true,
+                    checkin_opens_at: true,
+                    checkin_closes_at: true,
+                    status: true,
+                    actual_start: true,
+                    actual_end: true,
+                    venue_latitude: true,
+                    venue_longitude: true,
+                    venue_name: true,
+                    geofence_radius_meters: true,
+                    require_liveness_check: true,
+                    require_face_match: true,
+                    risk_threshold: true,
+                    qr_code_enabled: true,
+                    created_at: true,
+                    updated_at: true
+                }
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
                 throw new NotFoundError();
             }
-
-            return rows[0] as Session;
-        } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    delete: async function (pgClient: any, user: { sub: string, role: USER_ROLE_TYPES }, id: string) {
+    delete: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, id: string) => {
         try {
-            const userId = user?.sub as string;
-            const role = user?.role as USER_ROLE_TYPES;
+            const userId = user.sub;
+            const role = user.role;
 
-            let sessionRes;
-            if (role === USER_ROLE_TYPES.INSTRUCTOR || role === USER_ROLE_TYPES.TA) {
-                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND instructor_id = $2 AND status = $3 RETURNING *', [id, userId, SESSION_STATUS.SCHEDULED]);
-            } else {
-                sessionRes = await pgClient.query('DELETE FROM sessions WHERE id = $1 AND status = $2 RETURNING *', [id, SESSION_STATUS.SCHEDULED]);
-            }
-            const { rows } = sessionRes;
-
-            if (rows.length === 0) {
+            return await prisma.sessions.delete({
+                where: {
+                    id,
+                    status: SESSION_STATUS.SCHEDULED,
+                    ...(role === USER_ROLE_TYPES.INSTRUCTOR || role === USER_ROLE_TYPES.TA ? { instructor_id: userId } : {})
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    course_id: true
+                }
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
                 throw new NotFoundError();
             }
-
-            return sessionRes.rows[0] as Session;
-        } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    updateStatusById: async function (pgClient: any, id: string, status: SESSION_STATUS): Promise<Session | null> {
+    updateStatusById: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, id: string, status: SESSION_STATUS) => {
         try {
-            // Admin can update status regardless of transition states
-            const { rows } = await pgClient.query(
-                `UPDATE sessions SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-                [status, id]
-            );
-
-            if (rows.length === 0) {
+            const where: any = { id };
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                where.instructor_id = user.sub;
+            }
+            return await prisma.sessions.update({
+                where,
+                data: { status, updated_at: new Date() },
+                select: {
+                    id: true,
+                    name: true,
+                    status: true
+                }
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
                 throw new NotFoundError();
             }
-
-            return rows[0] as Session;
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    // TODO: Use this somehow...
+    closeExpiredActiveSessions: async (prisma: PrismaClient): Promise<number> => {
+        try {
+            const result = await prisma.sessions.updateMany({
+                where: {
+                    status: SESSION_STATUS.ACTIVE,
+                    checkin_closes_at: { lt: new Date() }
+                },
+                data: {
+                    status: SESSION_STATUS.CLOSED,
+                    actual_end: new Date(),
+                    updated_at: new Date()
+                }
+            });
+            return result.count;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    // TODO: Everything below needs to be refactored and tested accordingly
-    closeExpiredActiveSessions: async function (pgClient: any): Promise<number> {
-        const result = await pgClient.query(
-            `UPDATE sessions
-             SET status = $1,
-                 actual_end = COALESCE(actual_end, NOW()),
-                 updated_at = NOW()
-             WHERE status = $2
-               AND checkin_closes_at IS NOT NULL
-               AND checkin_closes_at < NOW()`,
-            [SESSION_STATUS.CLOSED, SESSION_STATUS.ACTIVE]
-        );
-        return result.rowCount ?? 0;
-    },
-    issueQr: async function (pgClient: any, id: string): Promise<SessionQrPayload> {
-        const session = await this.getById(pgClient, id);
+    issueQr: async (prisma: PrismaClient, id: string): Promise<SessionQrPayload> => {
+        try {
+            let session = await SessionModel.getById(prisma, id);
 
-        if (session.status !== SESSION_STATUS.ACTIVE) {
-            throw new BadRequestError('QR codes can only be issued for active sessions');
-        }
-        if (!session.qr_code_enabled) {
-            throw new BadRequestError('QR codes are not enabled for this session');
-        }
-
-        const now = Date.now();
-        let qrSecret = session.qr_code_secret;
-        let qrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at) : null;
-
-        if (!qrSecret || !qrExpiresAt || qrExpiresAt.getTime() <= now) {
-            const nextQr = generateQrSecretAndExpiry();
-            qrSecret = nextQr.qrSecret;
-            qrExpiresAt = nextQr.qrCodeExpiresAt;
-
-            const updateResult = await pgClient.query(
-                `UPDATE sessions
-                 SET qr_code_secret = $1,
-                     qr_code_expires_at = $2,
-                     updated_at = NOW()
-                 WHERE id = $3
-                 RETURNING qr_code_secret, qr_code_expires_at`,
-                [qrSecret, qrExpiresAt, id]
-            );
-
-            if (!updateResult.rows.length) {
-                throw new NotFoundError();
+            if (session.status !== SESSION_STATUS.ACTIVE) {
+                throw new BadRequestError('QR codes can only be issued for active sessions');
+            }
+            if (!session.qr_code_enabled) {
+                throw new BadRequestError('QR codes are not enabled for this session');
             }
 
-            qrSecret = updateResult.rows[0].qr_code_secret as string;
-            qrExpiresAt = new Date(updateResult.rows[0].qr_code_expires_at);
+            const now = Date.now();
+            let qrSecret = session.qr_code_secret;
+            let qrExpiresAt = session.qr_code_expires_at ? new Date(session.qr_code_expires_at) : null;
+
+            if (!qrSecret || !qrExpiresAt || qrExpiresAt.getTime() <= now) {
+                const nextQr = generateQrSecretAndExpiry();
+                qrSecret = nextQr.qrSecret;
+                qrExpiresAt = nextQr.qrCodeExpiresAt;
+
+                await prisma.sessions.update({
+                    where: { id },
+                    data: {
+                        qr_code_secret: qrSecret,
+                        qr_code_expires_at: qrExpiresAt,
+                        updated_at: new Date()
+                    }
+                });
+            }
+
+            const qrPayload = buildQrPayload(id, qrSecret, qrExpiresAt);
+            const qrCode = await QRCode.toDataURL(qrPayload);
+            const ttlSeconds = Math.max(0, Math.floor((qrExpiresAt.getTime() - now) / 1000));
+
+            return {
+                qr_payload: qrPayload,
+                qr_expires_at: qrExpiresAt,
+                qr_ttl_seconds: ttlSeconds,
+                qr_code: qrCode
+            };
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError();
+            }
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
-
-        const qrPayload = buildQrPayload(id, qrSecret, qrExpiresAt);
-        const qrCode = await QRCode.toDataURL(qrPayload);
-        const ttlSeconds = Math.max(0, Math.floor((qrExpiresAt.getTime() - now) / 1000));
-
-        return {
-            qr_payload: qrPayload,
-            qr_expires_at: qrExpiresAt,
-            qr_ttl_seconds: ttlSeconds,
-            qr_code: qrCode
-        };
     }
 }

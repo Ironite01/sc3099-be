@@ -37,7 +37,7 @@ export const CourseModel = {
                         created_at: true,
                         users: {
                             select: {
-                                id: true
+                                full_name: true
                             }
                         }
                     },
@@ -54,13 +54,18 @@ export const CourseModel = {
                 })
             ]);
 
-            return { items, total };
+            return {
+                items: items.map((i: any) => {
+                    const instructor_name = i.users!.full_name;
+                    delete i.users;
+                    return { ...i, instructor_name };
+                }), total
+            };
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-
     findById: async (prisma: PrismaClient, id: string): Promise<Course> => {
         try {
             return await prisma.courses.findUniqueOrThrow({
@@ -74,7 +79,6 @@ export const CourseModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-
     create: async (prisma: PrismaClient, data: {
         code: string;
         name: string;
@@ -156,7 +160,7 @@ export const CourseModel = {
                     ...(data.risk_threshold !== undefined && { risk_threshold: data.risk_threshold }),
                     ...(data.instructor_id !== undefined && USER_ROLE_TYPES.ADMIN && { instructor_id: data.instructor_id }),
                     updated_at: new Date()
-                } as any // check if instructor_id works here
+                } as any
             }) as Course;
         } catch (err: any) {
             if (err?.code === PrismaCodeMap.NOT_FOUND) {
@@ -166,7 +170,6 @@ export const CourseModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-
     delete: async (prisma: PrismaClient, id: string): Promise<void> => {
         try {
             await prisma.courses.update({
