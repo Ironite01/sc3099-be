@@ -15,7 +15,7 @@ export const CourseModel = {
         offset?: number | undefined;
     }) => {
         try {
-            const [items, total] = await prisma.$transaction([
+            const [items, total] = await Promise.all([
                 prisma.courses.findMany({
                     where: {
                         ...(filters.is_active !== undefined && { is_active: filters.is_active }),
