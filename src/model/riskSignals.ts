@@ -123,7 +123,7 @@ export const RiskSignalModel = {
                     signal_type: signal.signal_type as any,
                     severity: signal.severity as any,
                     confidence: signal.confidence,
-                    details: signal.details as any,
+                    details: signal.details ? JSON.stringify(signal.details) : null,
                     weight: signal.weight,
                     detected_at: signal.detected_at
                 }))

@@ -208,14 +208,13 @@ export const CheckinModel = {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
 
-                if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
-                    throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
+                if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
+                    throw new BadRequestError('Liveness challenge response must be a valid base64 string');
                 }
 
                 const verificationImage = face_verification_image || liveness_challenge_response;
-
-                if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
-                    throw new BadRequestError('Liveness challenge response must be a valid base64 string');
+                if (requireFaceMatch && (!verificationImage || !isBase64(verificationImage))) {
+                    throw new BadRequestError('Face image is required and must be a valid base64 string');
                 }
 
                 let livenessPassed = true;
