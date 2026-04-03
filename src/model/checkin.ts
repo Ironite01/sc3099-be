@@ -510,20 +510,27 @@ export const CheckinModel = {
     },
     getBySessionIdAndUser: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, sessionId: string) => {
         try {
-            const where: any = { session_id: sessionId };
+            let where: any = {};
 
             if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                where.sessions = {
-                    OR: [
-                        { instructor_id: user.sub },
-                        { courses: { instructor_id: user.sub } }
+                where = {
+                    AND: [
+                        { session_id: sessionId },
+                        {
+                            OR: [
+                                { instructor_id: user.sub },
+                                { courses: { is: { instructor_id: user.sub } } }
+                            ]
+                        }
                     ]
                 };
             } else if (user.role === USER_ROLE_TYPES.TA) {
                 where.sessions = {
                     instructor_id: user.sub
                 };
-            } else if (user.role === USER_ROLE_TYPES.STUDENT) {
+            } else if (user.role === USER_ROLE_TYPES.ADMIN) {
+                where = { session_id: sessionId };
+            } else {
                 throw new ForbiddenError();
             }
 

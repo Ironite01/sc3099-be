@@ -562,7 +562,6 @@ export const SessionModel = {
 
                 const allowedNextStatuses = validTransitions[currentSession.status];
                 if (!allowedNextStatuses.includes(data.status)) {
-                    console.log("TEST")
                     throw new BadRequestError(`Cannot transition from ${currentSession.status} to ${data.status}`);
                 }
             }
@@ -661,9 +660,23 @@ export const SessionModel = {
     },
     updateStatusById: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, id: string, status: SESSION_STATUS) => {
         try {
-            const where: any = { id };
+            let where: any = { id };
             if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                where.instructor_id = user.sub;
+                where.AND = [
+                    { id },
+                    {
+                        OR: [
+                            { instructor_id: user.sub },
+                            {
+                                courses: {
+                                    is: {
+                                        instructor_id: user.sub
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ];
             }
             return await prisma.sessions.update({
                 where,
