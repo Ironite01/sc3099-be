@@ -22,14 +22,14 @@ async function courseController(fastify: any) {
         },
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const { is_active, semester, limit = 50, offset = 0 } = req.query as any;
-        let req_instructor_id = (req.user as any).role === USER_ROLE_TYPES.ADMIN ? (req.query as any).instructor_id : null;
+        let req_instructor_id = (req.user as any).role === USER_ROLE_TYPES.ADMIN ? (req.query as any).instructor_id : undefined;
 
         const { items, total } = await CourseModel.getFilteredCourses(prisma, {
             is_active,
             semester,
-            instructor_id: req_instructor_id,
+            ...(req_instructor_id && { instructor_id: req_instructor_id }),
             limit,
             offset
         });
@@ -45,7 +45,7 @@ async function courseController(fastify: any) {
             }
         }, preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const { course_id } = req.params as any;
         const course = await CourseModel.findById(prisma, course_id);
         res.status(200).send(course);
@@ -74,7 +74,7 @@ async function courseController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const course = await CourseModel.create(prisma, req.body as any);
         res.status(201).send(course);
     });
@@ -104,7 +104,7 @@ async function courseController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const user = req.user as any;
         const course = await CourseModel.update(prisma, (req.params as any).course_id, req.body as any, user);
         res.status(200).send(course);
@@ -119,7 +119,7 @@ async function courseController(fastify: any) {
             },
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         await CourseModel.delete(prisma, (req.params as any).course_id);
         res.status(204).send();
     });

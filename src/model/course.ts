@@ -56,12 +56,13 @@ export const CourseModel = {
 
             return {
                 items: items.map((i: any) => {
-                    const instructor_name = i.users!.full_name;
+                    const instructor_name = i.users?.full_name || null;
                     delete i.users;
                     return { ...i, instructor_name };
                 }), total
             };
         } catch (err: any) {
+            console.log(err)
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }

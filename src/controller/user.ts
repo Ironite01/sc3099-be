@@ -26,7 +26,7 @@ async function userController(fastify: FastifyInstance) {
             preHandler: [fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
-            const prisma = await fastify.prisma;
+            const prisma = fastify.prisma;
             const data = await UserModel.getByFilteredUsers(prisma, req.query as any);
             res.status(200).send(data);
         });

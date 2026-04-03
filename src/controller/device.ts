@@ -31,7 +31,7 @@ async function deviceController(fastify: FastifyInstance) {
             offset?: number;
         };
 
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const result = await DeviceModel.getFiltered(prisma, {
             ...(user_id && { user_id }),
             ...(typeof is_active === 'boolean' && { is_active }),
@@ -101,7 +101,7 @@ async function deviceController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const userId = (req?.user as any).sub;
 
         const device = await DeviceModel.register(prisma, userId, req.body as any);
@@ -139,7 +139,7 @@ async function deviceController(fastify: FastifyInstance) {
     fastify.get(`${uri}/my-devices`, {
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const userId = (req?.user as any).sub;
         const devices = await DeviceModel.getAllByUserId(prisma, userId, true);
 
@@ -187,7 +187,7 @@ async function deviceController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
 
         const deviceId = (req?.params as any).device_id;
         const body: any = req.body;
@@ -217,7 +217,7 @@ async function deviceController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const userId = (req?.user as any).sub;
         const userRole = (req?.user as any).role;
         const deviceId = (req?.params as any).device_id;

@@ -259,7 +259,7 @@ async function authController(fastify: FastifyInstance) {
     fastify.post(`${uri}/logout`, { preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const userId = (req.user as any)?.sub;
         if (userId) {
-            await AuditModel.log(await fastify.prisma, {
+            await AuditModel.log(fastify.prisma, {
                 userId: userId,
                 action: AUDIT_ACTIONS.LOGOUT,
                 resourceType,

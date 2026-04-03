@@ -34,8 +34,8 @@ try {
         .register(fastifyCookie)
         .register(redis) // TODO: Use caching
         .register(rateLimiter)
-        .register(auth)
         .register(prismaPlugin)
+        .register(auth)
         .register(fastifyFormbody)
         .register(cors)
         .register(errorHandler)

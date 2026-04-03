@@ -151,7 +151,7 @@ async function checkinController(fastify: FastifyInstance) {
             qr_code
         };
 
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         try {
             const checkin = await CheckinModel.create(prisma, userId, userAgent ? { ...u, userAgent } : u);
 
@@ -177,7 +177,7 @@ async function checkinController(fastify: FastifyInstance) {
                     break;
             }
 
-            await AuditModel.log(await fastify.prisma, {
+            await AuditModel.log(prisma, {
                 userId,
                 action: auditAction,
                 resourceType,
@@ -205,7 +205,7 @@ async function checkinController(fastify: FastifyInstance) {
                 risk_signals: checkin.risk_signals || []
             });
         } catch (err) {
-            await AuditModel.log(await fastify.prisma, {
+            await AuditModel.log(prisma, {
                 userId,
                 action: AUDIT_ACTIONS.CHECKIN_ATTEMPTED,
                 resourceType,
@@ -246,7 +246,7 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const status = (req.query as any).status as CHECKIN_STATUS | undefined;
         const checkins = await CheckinModel.getFilteredCheckins(prisma, req.user as any, {
             ...req.query as any,
@@ -273,7 +273,7 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const studentId = (req.user as any)?.sub;
         const checkins = await CheckinModel.getFilteredCheckinsByStudentId(prisma, studentId, req.query as any);
 
@@ -301,7 +301,7 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const { sessionId } = req.params as { sessionId: string };
         const checkins = await CheckinModel.getBySessionIdAndUser(prisma, req.user as any, sessionId);
 
@@ -337,7 +337,7 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const result = await CheckinModel.getFilteredCheckins(prisma, req.user as any, {
             ...req.query as any,
             status: [CHECKIN_STATUS.FLAGGED, CHECKIN_STATUS.APPEALED]
@@ -369,7 +369,7 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const { checkin_id } = req.params as any;
         const user = req.user as any;
 
@@ -397,14 +397,14 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const { id } = req.params as { id: string };
         const { appeal_reason } = req.body as { appeal_reason: string };
         const studentId = (req.user as any)?.sub;
 
         const result = await CheckinModel.appeal(prisma, studentId, id, appeal_reason);
 
-        await AuditModel.log(await fastify.prisma, {
+        await AuditModel.log(prisma, {
             userId: (req.user as any)?.sub,
             action: AUDIT_ACTIONS.CHECKIN_APPEALED,
             resourceType,
@@ -447,7 +447,7 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const result = await CheckinModel.review(prisma, (req.params as any).id, {
             user: req.user as any,
             status: (req.body as any).status,
@@ -473,7 +473,7 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
 
-        await AuditModel.log(await fastify.prisma, {
+        await AuditModel.log(prisma, {
             userId: (req.user as any)?.sub,
             action: auditAction,
             resourceType,

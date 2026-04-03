@@ -10,7 +10,7 @@ function enrollmentController(fastify: FastifyInstance) {
     const resourceType = 'enrollment';
 
     fastify.get(`${uri}/my-enrollments`, { preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const studentId = (req.user as any)?.sub;
         const enrollments = await EnrollmentModel.getEnrollmentsByStudentId(prisma, studentId);
 
@@ -47,7 +47,7 @@ function enrollmentController(fastify: FastifyInstance) {
             preHandler: [fastify.authorize(2), fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
-            const prisma = await fastify.prisma;
+            const prisma = fastify.prisma;
             const user = req.user as { sub: string; role: USER_ROLE_TYPES };
             const courseId = (req.params as { courseId: string }).courseId;
             const results = await EnrollmentModel.getStudentsByCourseEnrollment(prisma, { id: user.sub, role: user.role }, courseId, req.query as { is_active?: boolean, search?: string });
@@ -82,7 +82,7 @@ function enrollmentController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const userId = (req.user as any)?.sub;
         const userRole = (req.user as any)?.role;
         const { student_id, course_id } = req.body as { student_id: string, course_id: string };
@@ -127,7 +127,7 @@ function enrollmentController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const userId = (req.user as any)?.sub;
         const userRole = (req.user as any)?.role;
         const { course_id, student_emails, create_accounts = false } = req.body as any;
@@ -154,7 +154,7 @@ function enrollmentController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const user = req.user as { sub: string; role: USER_ROLE_TYPES };
         const enrollmentId = (req.params as { enrollment_id: string }).enrollment_id;
         const enrollment = await EnrollmentModel.delete(prisma, { id: user.sub, role: user.role }, enrollmentId);

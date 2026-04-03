@@ -20,7 +20,7 @@ async function adminController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma
+        const prisma = fastify.prisma
         const { user_id } = req.params as { user_id: string };
         const user = await UserModel.deactivateById(prisma, user_id);
 
@@ -44,7 +44,7 @@ async function adminController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma
+        const prisma = fastify.prisma
         const { user_id } = req.params as { user_id: string };
         const user = await UserModel.activateById(prisma, user_id);
 
@@ -90,7 +90,7 @@ async function adminController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma
+        const prisma = fastify.prisma
         const { users } = req.body as any;
 
         const createdUsers = await UserModel.createMultipleUsers(prisma, users);
@@ -123,7 +123,7 @@ async function adminController(fastify: FastifyInstance) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma
+        const prisma = fastify.prisma
         const sessionId = (req.params as any).session_id;
         const nextStatus = (req.body as any).status;
         const session = await SessionModel.updateStatusById(prisma, req.user as any, sessionId, nextStatus);
@@ -149,7 +149,7 @@ async function adminController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma
+        const prisma = fastify.prisma
         const { student_id, course_id } = req.body as { student_id: string; course_id: string };
         const enrollment = await EnrollmentModel.create(prisma, req.user as any, { studentId: student_id, courseId: course_id });
 

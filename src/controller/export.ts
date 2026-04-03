@@ -46,7 +46,7 @@ async function exportController(fastify: FastifyInstance) {
             format?: string; start_date?: string; end_date?: string;
         };
 
-        const prisma = await fastify.prisma
+        const prisma = fastify.prisma
         const checkinRes = await CheckinModel.getFilteredCheckins(prisma, req.user as any, {
             course_id: courseId,
             start_date: start_date!,
@@ -108,7 +108,7 @@ async function exportController(fastify: FastifyInstance) {
         res.header('Content-Type', 'text/csv');
         res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.csv"`);
 
-        await AuditModel.log(await fastify.prisma, {
+        await AuditModel.log(prisma, {
             userId: (req.user as any)?.sub,
             action: AUDIT_ACTIONS.DATA_EXPORTED,
             resourceType,
@@ -141,7 +141,7 @@ async function exportController(fastify: FastifyInstance) {
         const { sessionId } = req.params as { sessionId: string };
         const { format = 'csv' } = req.query as { format?: string };
 
-        const prisma = await fastify.prisma
+        const prisma = fastify.prisma
         const checkinRes = await CheckinModel.getFilteredCheckins(prisma, req.user as any, {
             session_id: sessionId,
             limit: Infinity
@@ -201,7 +201,7 @@ async function exportController(fastify: FastifyInstance) {
         res.header('Content-Type', 'text/csv');
         res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.csv"`);
 
-        await AuditModel.log(await fastify.prisma, {
+        await AuditModel.log(prisma, {
             userId: (req.user as any)?.sub,
             action: AUDIT_ACTIONS.DATA_EXPORTED,
             resourceType,

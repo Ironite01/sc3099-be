@@ -213,6 +213,7 @@ export const CheckinModel = {
                 }
 
                 const verificationImage = face_verification_image || liveness_challenge_response;
+
                 if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
                     throw new BadRequestError('Liveness challenge response must be a valid base64 string');
                 }

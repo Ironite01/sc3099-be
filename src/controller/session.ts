@@ -28,7 +28,7 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const { limit = 50, offset = 0 } = (req.query) as any;
         const { items, total } = await SessionModel.getAllFilteredSessions(prisma, req.user as any, req.query as any);
         res.status(200).send({ items, total, limit, offset });
@@ -51,7 +51,7 @@ async function sessionController(fastify: any) {
         preHandler: [fastify.rateLimit()]
     },
         async (req: FastifyRequest, res: FastifyReply) => {
-            const prisma = await fastify.prisma;
+            const prisma = fastify.prisma;
             // We assume that this API may have some filters
             const queryStrings = req?.query as any;
             const sessions = await SessionModel.getActiveSessions(prisma, queryStrings);
@@ -84,7 +84,7 @@ async function sessionController(fastify: any) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const user = req.user as any;
         const sessions = await SessionModel.getFilteredSessionsByUser(prisma, user, req.query as any);
 
@@ -100,7 +100,7 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize(), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const userRole = (req.user as any)?.role;
         const session = await SessionModel.findById(prisma, userRole, (req.params as any).session_id);
         res.status(200).send(session);
@@ -134,7 +134,7 @@ async function sessionController(fastify: any) {
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
         // In this endpoint, we also allow TA since there is a relation with them and sessions.
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const user = req.user as any;
         if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
             (req.body as any).instructor_id = user.sub;
@@ -189,11 +189,11 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const user = req.user as any;
         const session = await SessionModel.update(prisma, user, (req.params as any).session_id, req.body as any);
 
-        await AuditModel.log(await fastify.pg.connect(), {
+        await AuditModel.log(prisma, {
             userId: user.sub,
             action: AUDIT_ACTIONS.SESSION_UPDATED,
             resourceType,
@@ -219,11 +219,11 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const user = req.user as any;
         const session = await SessionModel.delete(prisma, user, (req.params as any).session_id);
 
-        await AuditModel.log(await fastify.pg.connect(), {
+        await AuditModel.log(prisma, {
             userId: user.sub,
             action: AUDIT_ACTIONS.SESSION_DELETED,
             resourceType,
@@ -252,7 +252,7 @@ async function sessionController(fastify: any) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
-        const prisma = await fastify.prisma;
+        const prisma = fastify.prisma;
         const qrPayload = await SessionModel.issueQr(prisma, req.user as any, req.params.id);
         res.status(200).send(qrPayload);
     });
