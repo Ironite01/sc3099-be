@@ -13,7 +13,7 @@
 #### GET /users/✅
 #### GET /users/{user_id}✅
 #### PATCH /users/{user_id}✅
-#### POST /users/me/face/enroll - not tested yet
+#### POST /users/me/face/enroll✅
 
 ### Courses
 

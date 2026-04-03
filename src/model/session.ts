@@ -220,10 +220,12 @@ export const SessionModel = {
             const where: any = {};
 
             if (role === USER_ROLE_TYPES.STUDENT) {
-                where.enrollments = {
-                    some: {
-                        student_id: userId,
-                        is_active: true
+                where.courses = {
+                    enrollments: {
+                        some: {
+                            student_id: userId,
+                            is_active: true
+                        }
                     }
                 };
             } else if (role === USER_ROLE_TYPES.INSTRUCTOR) {
@@ -298,6 +300,7 @@ export const SessionModel = {
                 }
             })
         } catch (err: any) {
+            console.log('Error in getFilteredSessionsByUser:', err);
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
