@@ -34,10 +34,11 @@ async function authController(fastify: FastifyInstance) {
                             USER_ROLE_TYPES.TA,
                             USER_ROLE_TYPES.INSTRUCTOR,
                             USER_ROLE_TYPES.ADMIN
-                        ]
+                        ],
+                        default: USER_ROLE_TYPES.STUDENT
                     }
                 },
-                required: ['email', 'password', 'full_name', 'role'],
+                required: ['email', 'password', 'full_name'],
                 additionalProperties: false
             }
         },
@@ -48,7 +49,11 @@ async function authController(fastify: FastifyInstance) {
         })]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
-        const user = await UserModel.create(prisma, req.body as any);
+        const body = req.body as any;
+        const user = await UserModel.create(prisma, {
+            ...body,
+            role: body.role || USER_ROLE_TYPES.STUDENT
+        });
 
         await AuditModel.log(prisma, {
             userId: user.id,
@@ -79,7 +84,8 @@ async function authController(fastify: FastifyInstance) {
                 properties: {
                     email: {
                         type: 'string',
-                        format: 'email'
+                        format: 'email',
+                        pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$'
                     },
                     password: {
                         type: 'string'
@@ -164,34 +170,38 @@ async function authController(fastify: FastifyInstance) {
             { sub: user.id, type: 'refresh' }, { expiresIn: REFRESH_TOKEN_TTL }
         );
 
-        res.setCookie('access_token', accessToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-            sameSite: 'strict',
-            path: '/',
-            maxAge: ACCESS_TOKEN_TTL
-        });
-        res.setCookie('refresh_token', refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            path: '/',
-            maxAge: REFRESH_TOKEN_TTL
-        });
-
-        res.status(200).send({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-            token_type: "bearer",
-            user
-        });
+        const shouldSetAuthCookies = String((req.headers['x-saiv-cookie-auth'] || '')).toLowerCase() === '1';
+        if (shouldSetAuthCookies) {
+            res.setCookie('access_token', accessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                path: '/',
+                maxAge: ACCESS_TOKEN_TTL
+            });
+            res.setCookie('refresh_token', refreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                path: '/',
+                maxAge: REFRESH_TOKEN_TTL
+            });
+        }
     });
 
     fastify.post(`${uri}/refresh`, {
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    refresh_token: { type: 'string' }
+                }
+            }
+        },
         preHandler: [fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
-        const refresh_token: any = req.cookies.refresh_token;
+        const refresh_token: any = (req.body as any)?.refresh_token || req.cookies.refresh_token;
         if (!refresh_token) {
             throw new UnauthorizedError();
         }
@@ -217,20 +227,23 @@ async function authController(fastify: FastifyInstance) {
             { expiresIn: REFRESH_TOKEN_TTL }
         );
 
-        res.setCookie('access_token', accessToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-            sameSite: 'strict',
-            path: '/',
-            maxAge: ACCESS_TOKEN_TTL
-        });
-        res.setCookie('refresh_token', newRefreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            path: '/',
-            maxAge: REFRESH_TOKEN_TTL
-        });
+        const shouldSetAuthCookies = String((req.headers['x-saiv-cookie-auth'] || '')).toLowerCase() === '1';
+        if (shouldSetAuthCookies) {
+            res.setCookie('access_token', accessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+                sameSite: 'strict',
+                path: '/',
+                maxAge: ACCESS_TOKEN_TTL
+            });
+            res.setCookie('refresh_token', newRefreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                path: '/',
+                maxAge: REFRESH_TOKEN_TTL
+            });
+        }
 
         res.status(200).send({ refresh_token: newRefreshToken, access_token: accessToken, user });
     });

@@ -45,7 +45,12 @@ function validation(fastify: FastifyInstance) {
                 msg: issue.message || "Invalid input",
                 type: buildValidationType(issue)
             }));
-            return reply.status(422).send({ detail });
+            return reply.status(422).send({
+                statusCode: 422,
+                error: 'Validation Error',
+                message: 'Validation Error',
+                detail
+            });
         }
 
         const isKnownAppError = error instanceof AppError;
@@ -56,7 +61,12 @@ function validation(fastify: FastifyInstance) {
             ? (error.message || statusDefaultMessage[String(statusCode) as keyof typeof statusDefaultMessage])
             : statusDefaultMessage["500"];
         request.log.error(error);
-        reply.status(statusCode).send({ detail });
+        reply.status(statusCode).send({
+            statusCode,
+            error: statusDefaultMessage[String(statusCode) as keyof typeof statusDefaultMessage] || 'Error',
+            message: detail,
+            detail
+        });
     });
 }
 

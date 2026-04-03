@@ -67,6 +67,7 @@ async function courseController(fastify: any) {
                     require_face_recognition: { type: 'boolean', default: false },
                     require_device_binding: { type: 'boolean', default: true },
                     risk_threshold: { type: 'number', default: 0.5 },
+                    is_active: { type: 'boolean' },
                     instructor_id: { type: 'string' }
                 },
                 required: ['code', 'name', 'semester'],
@@ -97,6 +98,7 @@ async function courseController(fastify: any) {
                     require_face_recognition: { type: 'boolean' },
                     require_device_binding: { type: 'boolean' },
                     risk_threshold: { type: 'number' },
+                    is_active: { type: 'boolean' },
                     instructor_id: { type: 'string' }
                 }
             }

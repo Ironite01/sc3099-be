@@ -39,7 +39,7 @@ async function exportController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { courseId } = req.params as { courseId: string };
         const { format = 'csv', start_date, end_date } = req.query as {
@@ -59,7 +59,18 @@ async function exportController(fastify: FastifyInstance) {
 
         const allCheckins = checkinRes.items;
         if (allCheckins.length === 0) {
-            return res.status(200).send(format === 'json' ? [] : '');
+            if (format === 'json') {
+                return res.status(200).send({
+                    course_id: courseId,
+                    summary: {
+                        total_enrolled: 0,
+                        total_records: 0,
+                        attendance_rate: 0
+                    },
+                    records: []
+                });
+            }
+            return res.status(200).send('');
         }
 
         const rows = allCheckins.map((r: any) => ({
@@ -82,7 +93,15 @@ async function exportController(fastify: FastifyInstance) {
         if (format === 'json') {
             res.header('Content-Type', 'application/json');
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.json"`);
-            return res.status(200).send(rows);
+            return res.status(200).send({
+                course_id: courseId,
+                summary: {
+                    total_enrolled: rows.length,
+                    total_records: rows.length,
+                    attendance_rate: 100
+                },
+                records: rows
+            });
         }
 
         const csv = toCsv(rows as Record<string, unknown>[]);
@@ -117,7 +136,7 @@ async function exportController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { sessionId } = req.params as { sessionId: string };
         const { format = 'csv' } = req.query as { format?: string };
@@ -133,7 +152,18 @@ async function exportController(fastify: FastifyInstance) {
 
         const allCheckins = checkinRes.items;
         if (allCheckins.length === 0) {
-            return res.status(200).send(format === 'json' ? [] : '');
+            if (format === 'json') {
+                return res.status(200).send({
+                    session_id: sessionId,
+                    summary: {
+                        total_enrolled: 0,
+                        total_records: 0,
+                        attendance_rate: 0
+                    },
+                    records: []
+                });
+            }
+            return res.status(200).send('');
         }
 
         const rows = allCheckins.map((r: any) => ({
@@ -156,7 +186,15 @@ async function exportController(fastify: FastifyInstance) {
         if (format === 'json') {
             res.header('Content-Type', 'application/json');
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.json"`);
-            return res.status(200).send(rows);
+            return res.status(200).send({
+                session_id: sessionId,
+                summary: {
+                    total_enrolled: rows.length,
+                    total_records: rows.length,
+                    attendance_rate: 100
+                },
+                records: rows
+            });
         }
 
         const csv = toCsv(rows as Record<string, unknown>[]);

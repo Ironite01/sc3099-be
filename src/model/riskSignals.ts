@@ -20,6 +20,53 @@ export type RiskSignal = {
     detected_at: Date;
 };
 
+const ALLOWED_SIGNAL_TYPES = new Set([
+    'geo_out_of_bounds',
+    'impossible_travel',
+    'geo_accuracy_low',
+    'vpn_detected',
+    'proxy_detected',
+    'tor_detected',
+    'suspicious_ip',
+    'device_unknown',
+    'device_emulator',
+    'device_rooted',
+    'attestation_failed',
+    'rapid_succession',
+    'unusual_time',
+    'pattern_anomaly',
+    'liveness_failed',
+    'liveness_low_confidence',
+    'deepfake_suspected',
+    'replay_suspected',
+    'face_match_failed',
+    'face_match_low_confidence'
+]);
+
+function normalizeSignalType(signalType: string): string {
+    const key = String(signalType || '').trim().toLowerCase();
+    if (ALLOWED_SIGNAL_TYPES.has(key)) {
+        return key;
+    }
+
+    // Map ML aggregate keys into enum-backed categories.
+    switch (key) {
+        case 'liveness':
+            return 'liveness_low_confidence';
+        case 'face_match':
+        case 'face_policy_penalty':
+            return 'face_match_low_confidence';
+        case 'device':
+            return 'device_unknown';
+        case 'network':
+            return 'suspicious_ip';
+        case 'geolocation':
+            return 'geo_out_of_bounds';
+        default:
+            return 'pattern_anomaly';
+    }
+}
+
 export function normalizeRiskFactors(value: any): any[] {
     if (Array.isArray(value)) return value;
     if (value && typeof value === 'object') return [value];
@@ -48,7 +95,7 @@ export function buildRiskSignals(
     return Object.entries(signalBreakdown).map(([signalType, rawWeight]) => {
         const weight = Number(rawWeight) || 0;
         return {
-            signal_type: signalType,
+            signal_type: normalizeSignalType(signalType),
             severity: getSignalSeverity(weight),
             confidence: 1,
             details: recommendations.length ? { recommendations } : null,

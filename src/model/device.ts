@@ -1,5 +1,5 @@
 import type { PrismaClient, devices as Device } from '../generated/prisma/client.js';
-import { AppError, BadRequestError, NotFoundError, ForbiddenError } from './error.js';
+import { AppError, BadRequestError, NotFoundError, ForbiddenError, ConflictError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
 import deviceAttestationService from '../services/attestation/index.js';
@@ -31,7 +31,7 @@ export const DeviceModel = {
             browser?: string;
             os_version?: string;
             app_version?: string;
-            public_key: string;
+            public_key?: string;
             platformAttestation?: {
                 integrityToken?: string;
                 attestationObject?: string;
@@ -53,6 +53,10 @@ export const DeviceModel = {
             deviceDetectedRooted
         } = payload;
 
+        const resolvedPublicKey = public_key && public_key.trim().length > 0
+            ? public_key
+            : `legacy:${device_fingerprint}`;
+
         // Check if the platform is valid if platform is provided in the payload
         if (platform && !Object.values(PLATFORM_TYPES).includes(platform as PLATFORM_TYPES)) {
             throw new BadRequestError("Invalid platform type");
@@ -69,69 +73,71 @@ export const DeviceModel = {
             try {
                 const existingDevice = await tx.devices.findFirst({
                     where: {
-                        device_fingerprint,
-                        user_id: userId
+                        device_fingerprint
                     }
                 });
 
-                if (existingDevice && existingDevice.revocation_reason === `Deleted by ${USER_ROLE_TYPES.ADMIN}`) {
+                const isAdminRevoked = (reason?: string) =>
+                    typeof reason === 'string' &&
+                    reason.toLowerCase().includes(`deleted by ${USER_ROLE_TYPES.ADMIN}`);
+
+                if (existingDevice && userId !== existingDevice.user_id) {
+                    if (isAdminRevoked(existingDevice.revocation_reason!)) {
+                        throw new ForbiddenError("This device has been revoked by an administrator");
+                    }
+                    if (existingDevice && existingDevice.is_active) {
+                        throw new ConflictError('Device fingerprint already registered to another account');
+                    }
+                }
+
+                if (existingDevice && existingDevice.user_id === userId && isAdminRevoked(existingDevice.revocation_reason!)) {
                     throw new ForbiddenError("This device has been revoked by an administrator");
                 }
 
-                // Upsert device
-                const device = await tx.devices.upsert({
-                    where: { device_fingerprint },
-                    select: {
-                        id: true,
-                        device_fingerprint: true,
-                        device_name: true,
-                        platform: true,
-                        is_trusted: true,
-                        trust_score: true,
-                        is_active: true,
-                        first_seen_at: true,
-                        is_emulator: true,
-                        is_rooted_jailbroken: true,
-                        attestation_passed: true
-                    },
-                    create: {
-                        id: randomUUID(),
-                        user_id: userId,
-                        device_fingerprint,
-                        device_name: device_name ?? null,
-                        platform: platform ?? null,
-                        public_key,
-                        browser: browser ?? null,
-                        os_version: os_version ?? null,
-                        app_version: app_version ?? null,
-                        attestation_passed: attestationResult.passed,
-                        is_emulator: attestationResult.isEmulator,
-                        is_rooted_jailbroken: attestationResult.isRootedJailbroken,
-                        is_trusted: false,
-                        trust_score: TRUST_SCORE_TYPES.LOW,
-                        is_active: true,
-                        first_seen_at: new Date(),
-                        last_seen_at: new Date(),
-                        total_checkins: 0,
-                        public_key_created_at: new Date()
-                    },
-                    update: {
-                        ...(payload.device_name !== undefined && { device_name: payload.device_name }),
-                        ...(payload.platform !== undefined && { platform: payload.platform }),
-                        ...(payload.browser !== undefined && { browser: payload.browser }),
-                        ...(payload.os_version !== undefined && { os_version: payload.os_version }),
-                        ...(payload.app_version !== undefined && { app_version: payload.app_version }),
-                        public_key,
-                        public_key_created_at: new Date(),
-                        attestation_passed: attestationResult.passed,
-                        is_emulator: attestationResult.isEmulator,
-                        is_rooted_jailbroken: attestationResult.isRootedJailbroken,
-                        is_active: true,
-                        revoked_at: null,
-                        revocation_reason: null,
-                        last_seen_at: new Date()
-                    }
-                });
+                const device = existingDevice ?
+                    await tx.devices.update({
+                        where: { id: existingDevice.id },
+                        data: {
+                            user_id: userId,
+                            device_name: device_name ?? null,
+                            platform: platform ?? null,
+                            public_key: resolvedPublicKey,
+                            browser: browser ?? null,
+                            os_version: os_version ?? null,
+                            app_version: app_version ?? null,
+                            attestation_passed: attestationResult.passed,
+                            is_emulator: attestationResult.isEmulator,
+                            is_rooted_jailbroken: attestationResult.isRootedJailbroken,
+                            revocation_reason: null,
+                            is_active: true,
+                            revoked_at: null,
+                            last_seen_at: new Date(),
+                            public_key_created_at: new Date()
+                        }
+                    }) :
+                    await tx.devices.create({
+                        data: {
+                            id: randomUUID(),
+                            user_id: userId,
+                            device_fingerprint,
+                            device_name: device_name ?? null,
+                            platform: platform ?? null,
+                            public_key: resolvedPublicKey,
+                            public_key_created_at: new Date(),
+                            is_trusted: false,
+                            trust_score: TRUST_SCORE_TYPES.LOW,
+                            is_active: true,
+                            first_seen_at: new Date(),
+                            last_seen_at: new Date(),
+                            total_checkins: 0,
+                            browser: browser ?? null,
+                            os_version: os_version ?? null,
+                            app_version: app_version ?? null,
+                            attestation_passed: attestationResult.passed,
+                            is_emulator: attestationResult.isEmulator,
+                            is_rooted_jailbroken: attestationResult.isRootedJailbroken
+                        }
+                    });
 
                 // Deactivate all other devices for this user
                 await tx.devices.updateMany({
@@ -145,6 +151,9 @@ export const DeviceModel = {
 
                 return device;
             } catch (err: any) {
+                if (err?.code === PrismaCodeMap.CONFLICT) {
+                    throw new ConflictError('Device fingerprint already registered to another account');
+                }
                 if (err instanceof AppError) throw err;
                 throw new BadRequestError('Database operation failed');
             }
@@ -197,7 +206,7 @@ export const DeviceModel = {
     },
     getByFingerprintAndUserId: async (prisma: PrismaClient, userId: string, fingerprint: string) => {
         try {
-            const device = await prisma.devices.findFirst({
+            const device = await prisma.devices.findFirstOrThrow({
                 where: {
                     device_fingerprint: fingerprint,
                     user_id: userId
@@ -219,12 +228,11 @@ export const DeviceModel = {
                 }
             });
 
-            if (!device) {
-                throw new NotFoundError('Device not found');
-            }
-
             return device;
         } catch (err: any) {
+            if (err.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError('Device not found');
+            }
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
@@ -297,12 +305,17 @@ export const DeviceModel = {
         try {
             const { userId, userRole } = user;
 
-            if (userRole !== USER_ROLE_TYPES.ADMIN && userRole !== USER_ROLE_TYPES.STUDENT) {
+            let where: any = {};
+            if (userRole === USER_ROLE_TYPES.STUDENT) {
+                where = { id: deviceId, user_id: userId };
+            } else if (userRole === USER_ROLE_TYPES.ADMIN) {
+                where = { id: deviceId };
+            } else {
                 throw new ForbiddenError();
             }
 
             await prisma.devices.update({
-                where: user.userRole === USER_ROLE_TYPES.STUDENT ? { id: deviceId, user_id: userId } : { id: deviceId },
+                where,
                 data: {
                     is_active: false,
                     revoked_at: new Date(),

@@ -129,6 +129,7 @@ export const CourseModel = {
         require_face_recognition?: boolean;
         require_device_binding?: boolean;
         risk_threshold?: number;
+        is_active?: boolean;
         instructor_id?: string | null;
     }, user: { sub: string; role: USER_ROLE_TYPES }): Promise<Course> => {
         try {
@@ -158,6 +159,7 @@ export const CourseModel = {
                     ...(data.require_face_recognition !== undefined && { require_face_recognition: data.require_face_recognition }),
                     ...(data.require_device_binding !== undefined && { require_device_binding: data.require_device_binding }),
                     ...(data.risk_threshold !== undefined && { risk_threshold: data.risk_threshold }),
+                    ...(data.is_active !== undefined && { is_active: data.is_active }),
                     ...(data.instructor_id !== undefined && USER_ROLE_TYPES.ADMIN && { instructor_id: data.instructor_id }),
                     updated_at: new Date()
                 } as any

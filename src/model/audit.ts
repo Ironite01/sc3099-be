@@ -173,10 +173,30 @@ export const AuditModel = {
             }) => {
         try {
             let { userId, action, resourceType, resourceId, ipAddress, userAgent, deviceId, success, details } = data;
+            const trim36 = (value?: string | null) => {
+                if (!value) return value ?? null;
+                return value.length > 36 ? value.slice(0, 36) : value;
+            };
+
+            const safeDetails = { ...(details || {}) } as Record<string, any>;
+            if (resourceId && resourceId.length > 36) {
+                safeDetails.resource_id_full = resourceId;
+            }
+            if (deviceId && deviceId.length > 36) {
+                safeDetails.device_id_full = deviceId;
+            }
+            if (userId && userId.length > 36) {
+                safeDetails.user_id_full = userId;
+            }
+
+            const safeUserId = trim36(userId);
+            const safeResourceId = trim36(resourceId) || 'unknown';
+            let safeDeviceId = trim36(deviceId);
+
             if (!deviceId && action !== AUDIT_ACTIONS.USER_CREATED && userId) {
                 try {
-                    const devices = await DeviceModel.getCurrentActiveDevice(prisma, userId);
-                    deviceId = devices.id;
+                    const device = await DeviceModel.getCurrentActiveDevice(prisma, userId);
+                    safeDeviceId = trim36(device.id);
                 } catch (err) {
                     console.error(`No device found for user with id ${userId} during audit logging`);
                 }
@@ -184,15 +204,15 @@ export const AuditModel = {
             await prisma.audit_logs.create({
                 data: {
                     id: randomUUID(),
-                    user_id: userId || null,
+                    user_id: safeUserId || null,
                     action: action,
                     resource_type: resourceType,
-                    resource_id: resourceId,
+                    resource_id: safeResourceId,
                     ip_address: ipAddress,
                     user_agent: userAgent,
-                    device_id: deviceId || null,
+                    device_id: safeDeviceId || null,
                     success: success,
-                    details: JSON.stringify(details || {}),
+                    details: JSON.stringify(safeDetails),
                     timestamp: new Date()
                 }
             });

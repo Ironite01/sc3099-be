@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import type { PrismaClient, users as User } from '../generated/prisma/client.js';
-import { isBase64, isStrongPassword } from '../helpers/regex.js';
+import { isBase64 } from '../helpers/regex.js';
 import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError, UnavailableError } from './error.js';
 import { SALT_ROUNDS } from '../helpers/constants.js';
 import { MlServices } from '../services/ml/index.js';
@@ -167,12 +167,8 @@ export const UserModel = {
     },
     create: async (prisma: PrismaClient, payload: { email: string; password: string, full_name: string, role: string }) => {
         try {
-            const { email, password, full_name, role } = payload;
-
-            // Email validation is handled by ajv
-            if (!isStrongPassword(password)) {
-                throw new BadRequestError("Password too weak");
-            }
+            const { email, password, role } = payload;
+            const full_name = String(payload.full_name || '').replace(/<[^>]*>/g, '').trim();
 
             // Hash password
             const salt = bcrypt.genSaltSync(SALT_ROUNDS);
@@ -297,13 +293,17 @@ export const UserModel = {
                 throw new BadRequestError("No fields to update");
             }
 
+            const full_name = payload.full_name !== undefined
+                ? String(payload.full_name).replace(/<[^>]*>/g, '').trim()
+                : undefined;
+
             return await prisma.users.update({
                 where: { id: userId },
                 data: {
                     updated_at: new Date(),
                     ...(payload.camera_consent !== undefined && { camera_consent: payload.camera_consent }),
                     ...(payload.geolocation_consent !== undefined && { geolocation_consent: payload.geolocation_consent }),
-                    ...(payload.full_name !== undefined && { full_name: payload.full_name })
+                    ...(full_name !== undefined && { full_name })
                 },
                 select: {
                     id: true,

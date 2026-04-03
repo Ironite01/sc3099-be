@@ -14,6 +14,7 @@ import { APPEAL_WINDOW_MS, DEFAULT_GEOFENCE_RADIUS_METERS } from '../helpers/con
 import { parseQrPayload, secureEqualsHex, signQrPayload } from '../helpers/qr.js';
 import getRiskLevel from '../helpers/getRiskLevels.js';
 import { buildRiskSignals, getSignalSeverity, normalizeRiskFactors, RiskSignalModel, type RiskSignal } from './riskSignals.js';
+import { CourseModel } from './course.js';
 
 export enum CHECKIN_STATUS {
     PENDING = 'pending',
@@ -61,17 +62,43 @@ export const CheckinModel = {
         location_accuracy_meters: number;
         device_fingerprint: string;
         liveness_challenge_response?: any;
+        face_verification_image?: any;
         liveness_challenge_type?: LivenessChallengeType;
         qr_code?: string;
     }) => {
         try {
-            const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent } = payload;
+            const {
+                session_id,
+                latitude,
+                longitude,
+                location_accuracy_meters = 50,
+                device_fingerprint,
+                liveness_challenge_response = null,
+                face_verification_image = null,
+                liveness_challenge_type = LivenessChallengeType.PASSIVE,
+                qr_code,
+                ipAddr,
+                userAgent
+            } = payload;
+
             return await prisma.$transaction(async (tx) => {
                 // 1. Validate device
-                const device = await DeviceModel.getByFingerprintAndUserId(tx as any, studentId, device_fingerprint);
-                if (!device || !device.is_active || device.revoked_at) {
-                    throw new BadRequestError('Device is not allowed for check-in');
+                let device;
+                try {
+                    device = await DeviceModel.getByFingerprintAndUserId(tx as any, studentId, device_fingerprint);
+                } catch (err: any) {
+                    if (err instanceof NotFoundError) {
+                        device = await DeviceModel.register(tx as any, studentId, {
+                            device_fingerprint,
+                            platform: 'web',
+                            browser: 'unknown',
+                            public_key: `legacy:${device_fingerprint}`
+                        });
+                    } else {
+                        throw err;
+                    }
                 }
+
                 // 2. Validate session
                 const session = await SessionModel.getById(tx as any, session_id);
                 if (!session) {
@@ -113,43 +140,72 @@ export const CheckinModel = {
                 }
 
                 // 4. Validate enrollment
-                const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(tx as any, studentId, session.course_id);
+                let enrollment;
+                try {
+                    enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(tx as any, studentId, session.course_id);
+                } catch (err) {
+                    if (err instanceof NotFoundError) {
+                        throw new BadRequestError('Student is not enrolled in the course');
+                    }
+                    throw err;
+                }
                 if (!enrollment) {
-                    throw new BadRequestError('Student is not enrolled in this course');
+                    throw new BadRequestError('Student is not enrolled in the course');
                 }
 
                 // 5. Geofencing
-                const venueLat = session.venue_latitude;
-                const venueLon = session.venue_longitude;
+                let venueLat = session.venue_latitude;
+                let venueLon = session.venue_longitude;
+                let geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
+
+                if (venueLat == null || venueLon == null) {
+                    let course;
+                    try {
+                        course = await CourseModel.findById(tx as any, session.course_id);
+                    } catch (err) {
+                        if (err instanceof NotFoundError) {
+                            throw new BadRequestError('Course not found for session');
+                        }
+                        throw err;
+                    }
+                    if (course) {
+                        venueLat = course.venue_latitude;
+                        venueLon = course.venue_longitude;
+                        geofenceRadius = geofenceRadius || course.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
+                    }
+                }
+
                 if (!venueLat || !venueLon) {
                     throw new BadRequestError('Session does not have a valid venue location');
                 }
 
-                const geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
                 const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
 
+
                 // 6. Liveness check and face verification
+                let status = CHECKIN_STATUS.PENDING;
+                const requireLiveness = session.require_liveness_check === true;
+                const requireFaceMatch = session.require_face_match === true;
+
                 const user = await UserModel.getById(tx as any, studentId);
-                if (!user || !user.is_active || !user.face_embedding_hash) {
+                if (!user || !user.is_active || (requireFaceMatch && !user.face_embedding_hash)) {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
 
-                let status = CHECKIN_STATUS.PENDING;
-                const requireLiveness = session.require_liveness_check !== false;
                 if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
                     throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
                 }
 
-                const requireFaceMatch = session.require_face_match !== false;
-                if (requireFaceMatch && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
-                    throw new BadRequestError('Face image is required and must be a valid base64 string');
+                const verificationImage = face_verification_image || liveness_challenge_response;
+                if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
+                    throw new BadRequestError('Liveness challenge response must be a valid base64 string');
                 }
 
                 let livenessPassed = true;
                 let livenessScore: number | null = null;
                 let faceEmbeddingHash: string | null = null;
 
-                if (requireLiveness) {
+                if (requireLiveness && liveness_challenge_response) {
                     let livenessResult;
                     try {
                         livenessResult = await MlServices.liveness.check.post({
@@ -174,8 +230,8 @@ export const CheckinModel = {
                     let faceResult;
                     try {
                         faceResult = await MlServices.face.verify.post({
-                            image: liveness_challenge_response,
-                            reference_template_hash: user.face_embedding_hash
+                            image: verificationImage,
+                            reference_template_hash: user.face_embedding_hash!
                         });
                     } catch (err: any) {
                         const msg = String(err?.message || 'Failed to verify face.');

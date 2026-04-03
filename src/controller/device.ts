@@ -141,7 +141,7 @@ async function deviceController(fastify: FastifyInstance) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = await fastify.prisma;
         const userId = (req?.user as any).sub;
-        const devices = await DeviceModel.getAllByUserId(prisma, userId);
+        const devices = await DeviceModel.getAllByUserId(prisma, userId, true);
 
         res.status(200).send(
             devices.map(device => ({

@@ -1,8 +1,3 @@
-export function isStrongPassword(password: string) {
-    const re = new RegExp("^(?=.*[A-Za-z])(?=.*[0-9]).{8,}$");
-    return re.test(password);
-}
-
 export function isBase64(image: string) {
     if (!image || typeof image !== 'string' || image.trim().length === 0) {
         return false;

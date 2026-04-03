@@ -38,8 +38,8 @@ try {
         .register(prismaPlugin)
         .register(fastifyFormbody)
         .register(cors)
-        .register(controller)
         .register(errorHandler)
+        .register(controller)
         .register(metricsPlugin);
 
     const address = await server.listen({ port: server.config.PORT!!, host: server.config.HOST!! });

@@ -21,16 +21,22 @@ export const EnrollmentModel = {
             }
             // We do not consider if course and enrollments are active or not
             const enrollments = await prisma.enrollments.findMany({
-                where: { student_id: studentId },
+                where: {
+                    student_id: studentId,
+                    is_active: true,
+                    courses: {
+                        is: {
+                            is_active: true
+                        }
+                    }
+                },
                 select: {
                     id: true,
-                    student_id: true,
-                    course_id: true,
                     is_active: true,
                     enrolled_at: true,
-                    dropped_at: true,
                     courses: {
                         select: {
+                            id: true,
                             code: true,
                             name: true,
                             semester: true,
@@ -45,13 +51,15 @@ export const EnrollmentModel = {
                 orderBy: { enrolled_at: 'desc' }
             });
 
-            const data = enrollments.map(e => ({
-                ...e,
+            const data: any = enrollments.map(e => ({
+                id: e.id,
+                course_id: e.courses?.id,
                 course_code: e.courses?.code,
                 course_name: e.courses?.name,
                 semester: e.courses?.semester,
-                instructor_name: e.courses?.users?.full_name,
-            })) as any;
+                instructor_name: e.courses?.users?.full_name ?? 'Unassigned',
+                enrolled_at: e.enrolled_at
+            }));
 
             delete data.courses;
             return data;

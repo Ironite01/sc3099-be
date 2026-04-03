@@ -86,6 +86,8 @@ export const SessionModel = {
                     venue_name: true,
                     venue_latitude: true,
                     venue_longitude: true,
+                    require_liveness_check: true,
+                    require_face_match: true,
                     courses: {
                         select: {
                             code: true
