@@ -1,4 +1,3 @@
-import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { AppError, BadRequestError } from './error.js';
 import { DeviceModel } from './device.js';
@@ -28,7 +27,7 @@ export enum AUDIT_ACTIONS {
 }
 
 export const AuditModel = {
-    getFilteredLogs: async function (pgClient: PoolClient, filters: {
+    getFilteredLogs: async function (prisma: PrismaClient, filters: {
         user_id?: string;
         action?: AUDIT_ACTIONS;
         resource_type?: string;
@@ -54,114 +53,103 @@ export const AuditModel = {
                 offset = 0
             } = filters;
 
-            const conditions: string[] = [];
-            const params: unknown[] = [];
-            let p = 1;
+            // Ensure limit is valid
+            const validLimit = Math.max(1, Math.min(limit, 500));
 
-            if (user_id) {
-                conditions.push(`al.user_id = $${p++}`);
-                params.push(user_id);
-            }
-            if (action) {
-                conditions.push(`al.action = $${p++}`);
-                params.push(action);
-            }
-            if (resource_type) {
-                conditions.push(`al.resource_type = $${p++}`);
-                params.push(resource_type);
-            }
-            if (resource_id) {
-                conditions.push(`al.resource_id = $${p++}`);
-                params.push(resource_id);
-            }
-            if (success !== undefined) {
-                conditions.push(`al.success = $${p++}`);
-                params.push(success);
-            }
-            if (start_date) {
-                conditions.push(`al.timestamp >= $${p++}`);
-                params.push(start_date);
-            }
-            if (end_date) {
-                conditions.push(`al.timestamp <= $${p++}`);
-                params.push(end_date);
-            }
+            // Build where clause
+            const where: any = {};
+
+            if (user_id) where.user_id = user_id;
+            if (action) where.action = action;
+            if (resource_type) where.resource_type = resource_type;
+            if (resource_id) where.resource_id = resource_id;
+            if (success !== undefined) where.success = success;
+            if (start_date) where.timestamp = { ...where.timestamp, gte: new Date(start_date) };
+            if (end_date) where.timestamp = { ...where.timestamp, lte: new Date(end_date) };
             if (search) {
-                conditions.push(`(u.email ILIKE $${p} OR al.resource_id::text ILIKE $${p} OR al.details ILIKE $${p})`);
-                params.push(`%${search}%`);
-                p++;
+                where.OR = [
+                    { users: { email: { contains: search, mode: 'insensitive' } } },
+                    { resource_id: { contains: search, mode: 'insensitive' } },
+                    { details: { contains: search, mode: 'insensitive' } }
+                ];
             }
 
-            const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+            const [total, logs] = await prisma.$transaction([
+                prisma.audit_logs.count({ where }),
+                prisma.audit_logs.findMany({
+                    where,
+                    select: {
+                        id: true,
+                        user_id: true,
+                        users: { select: { email: true } },
+                        action: true,
+                        resource_type: true,
+                        resource_id: true,
+                        ip_address: true,
+                        user_agent: true,
+                        device_id: true,
+                        details: true,
+                        success: true,
+                        timestamp: true
+                    },
+                    orderBy: { timestamp: 'desc' },
+                    take: validLimit,
+                    skip: offset
+                })
+            ]);
 
-            const countRow = await pgClient.query(
-                `SELECT COUNT(*) AS cnt
-				 FROM audit_logs al
-				 LEFT JOIN users u ON u.id = al.user_id
-				 ${where}`,
-                params
-            );
-            const total = parseInt(countRow.rows[0].cnt, 10);
-
-            const dataParams = [...params, limit, offset];
-            const dataRow = await pgClient.query(
-                `SELECT al.id, al.user_id, u.email AS user_email,
-						al.action, al.resource_type, al.resource_id,
-						al.ip_address, al.user_agent, al.device_id,
-						al.details, al.success, al.timestamp
-				 FROM audit_logs al
-				 LEFT JOIN users u ON u.id = al.user_id
-				 ${where}
-				 ORDER BY al.timestamp DESC
-				 LIMIT $${p} OFFSET $${p + 1}`,
-                dataParams
-            );
-
-            const items = dataRow.rows.map((row) => ({
-                ...row,
+            const items = logs.map(row => ({
+                id: row.id,
+                user_id: row.user_id,
+                user_email: row.users?.email,
+                action: row.action,
+                resource_type: row.resource_type,
+                resource_id: row.resource_id,
+                ip_address: row.ip_address,
+                user_agent: row.user_agent,
+                device_id: row.device_id,
                 details: (() => {
                     try {
                         return typeof row.details === 'string' ? JSON.parse(row.details) : row.details;
                     } catch {
                         return row.details;
                     }
-                })()
+                })(),
+                success: row.success,
+                timestamp: row.timestamp
             }));
 
-            return { items, total, limit, offset };
+            return { items, total, limit: validLimit, offset };
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getSummary: async function (pgClient: PoolClient, days = 7) {
+    getSummary: async function (prisma: PrismaClient, days = 7) {
         try {
             const cutoff = new Date();
             cutoff.setDate(cutoff.getDate() - days);
-            const cutoffIso = cutoff.toISOString();
 
-            const totalRow = await pgClient.query(
-                `SELECT COUNT(*) AS cnt FROM audit_logs WHERE timestamp >= $1`,
-                [cutoffIso]
-            );
-
-            const byActionRows = await pgClient.query(
-                `SELECT action, COUNT(*) AS cnt
-				 FROM audit_logs
-				 WHERE timestamp >= $1
-				 GROUP BY action
-				 ORDER BY cnt DESC`,
-                [cutoffIso]
-            );
+            const [total, grouped] = await Promise.all([
+                prisma.audit_logs.count({
+                    where: { timestamp: { gte: cutoff } }
+                }),
+                prisma.audit_logs.groupBy({
+                    by: ['action'],
+                    where: { timestamp: { gte: cutoff } },
+                    _count: true,
+                    orderBy: { _count: { action: 'desc' } }
+                })
+            ]);
 
             const by_action: Record<string, number> = {};
-            for (const row of byActionRows.rows) {
-                by_action[row.action] = parseInt(row.cnt, 10);
+            for (const group of grouped) {
+                by_action[group.action] = group._count;
             }
 
             return {
                 period_days: days,
-                total_logs: parseInt(totalRow.rows[0].cnt, 10),
+                total_logs: total,
                 by_action
             };
         } catch (err: any) {

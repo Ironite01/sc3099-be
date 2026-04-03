@@ -69,7 +69,7 @@ qr not tested
 
 ### Audit Logs
 
-#### GET /audit/
+#### GET /audit/✅
 
 ### Export
 

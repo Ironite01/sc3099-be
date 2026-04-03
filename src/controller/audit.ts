@@ -6,6 +6,7 @@ import { AuditModel } from '../model/audit.js';
 
 async function auditController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/audit`;
+
     fastify.get(`${uri}/`, {
         schema: {
             querystring: {
@@ -27,13 +28,8 @@ async function auditController(fastify: FastifyInstance) {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const query = req.query as any;
-        const pgClient = await fastify.pg.connect();
-        try {
-            const result = await AuditModel.getFilteredLogs(pgClient as any, query);
-            res.status(200).send(result);
-        } finally {
-            pgClient.release();
-        }
+        const result = await AuditModel.getFilteredLogs(fastify.prisma, query);
+        res.status(200).send(result);
     });
 
     // GET /api/v1/audit/summary  (admin only)
@@ -49,14 +45,8 @@ async function auditController(fastify: FastifyInstance) {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { days = 7 } = req.query as { days?: number };
-
-        const pgClient = await fastify.pg.connect();
-        try {
-            const result = await AuditModel.getSummary(pgClient as any, days);
-            res.status(200).send(result);
-        } finally {
-            pgClient.release();
-        }
+        const result = await AuditModel.getSummary(fastify.prisma, days);
+        res.status(200).send(result);
     });
 }
 
