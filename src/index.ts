@@ -5,7 +5,6 @@ import fastifyFormbody from '@fastify/formbody';
 import fastifyEnv from '@fastify/env';
 import fastifyCookie from '@fastify/cookie';
 import envSchema from './services/envSchema.json' with { type: 'json' };
-import pg from './services/pg.js';
 import auth from './services/auth.js';
 import cors from './services/cors.js';
 import errorHandler from './services/errorHandler.js';
@@ -36,7 +35,6 @@ try {
         .register(redis) // TODO: Use caching
         .register(rateLimiter)
         .register(auth)
-        .register(pg)
         .register(prismaPlugin)
         .register(fastifyFormbody)
         .register(cors)

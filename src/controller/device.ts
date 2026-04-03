@@ -10,7 +10,6 @@ async function deviceController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/devices`;
     const resourceType = 'device';
 
-    // TODO: Confirm if this API is in use and refactor
     fastify.get(`${uri}/`, {
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()],
         schema: {
@@ -32,53 +31,20 @@ async function deviceController(fastify: FastifyInstance) {
             offset?: number;
         };
 
-        const params: any[] = [];
-        const where: string[] = [];
-        if (user_id) {
-            params.push(user_id);
-            where.push(`d.user_id = $${params.length}`);
-        }
-        if (typeof is_active === 'boolean') {
-            params.push(is_active);
-            where.push(`d.is_active = $${params.length}`);
-        }
+        const prisma = await fastify.prisma;
+        const result = await DeviceModel.getFiltered(prisma, {
+            ...(user_id && { user_id }),
+            ...(typeof is_active === 'boolean' && { is_active }),
+            limit,
+            offset
+        });
 
-        const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-        const pgClient = await (fastify as any).pg.connect();
-        try {
-            const countResult = await pgClient.query(
-                `SELECT COUNT(*)::int AS total
-                 FROM devices d
-                 ${whereClause}`,
-                params
-            );
-
-            params.push(limit, offset);
-            const result = await pgClient.query(
-                `SELECT d.id, d.user_id, u.email, u.full_name, d.device_fingerprint,
-                        d.device_name, d.platform, d.is_trusted, d.trust_score,
-                        d.is_active,
-                        TO_CHAR((d.first_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS first_seen_at,
-                        TO_CHAR((d.last_seen_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS last_seen_at,
-                        d.total_checkins
-                 FROM devices d
-                 LEFT JOIN users u ON u.id = d.user_id
-                 ${whereClause}
-                 ORDER BY d.last_seen_at DESC
-                 LIMIT $${params.length - 1}
-                 OFFSET $${params.length}`,
-                params
-            );
-
-            res.status(200).send({
-                items: result.rows,
-                total: countResult.rows[0]?.total ?? 0,
-                limit,
-                offset
-            });
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send({
+            items: result.items,
+            total: result.total,
+            limit,
+            offset
+        });
     });
 
     fastify.post(`${uri}/register`, {

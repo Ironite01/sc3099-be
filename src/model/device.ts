@@ -334,5 +334,60 @@ export const DeviceModel = {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
+    },
+    getFiltered: async (prisma: PrismaClient, params: { user_id?: string; is_active?: boolean; limit?: number; offset?: number }) => {
+        try {
+            const { user_id, is_active, limit = 50, offset = 0 } = params;
+
+            const where: any = {};
+            if (user_id) where.user_id = user_id;
+            if (typeof is_active === 'boolean') where.is_active = is_active;
+
+            const [devices, total] = await Promise.all([
+                prisma.devices.findMany({
+                    where,
+                    select: {
+                        id: true,
+                        user_id: true,
+                        device_fingerprint: true,
+                        device_name: true,
+                        platform: true,
+                        is_trusted: true,
+                        trust_score: true,
+                        is_active: true,
+                        first_seen_at: true,
+                        last_seen_at: true,
+                        total_checkins: true,
+                        users: { select: { email: true, full_name: true } }
+                    },
+                    orderBy: { last_seen_at: 'desc' },
+                    take: limit,
+                    skip: offset
+                }),
+                prisma.devices.count({ where })
+            ]);
+
+            return {
+                items: devices.map(d => ({
+                    id: d.id,
+                    user_id: d.user_id,
+                    email: d.users?.email,
+                    full_name: d.users?.full_name,
+                    device_fingerprint: d.device_fingerprint,
+                    device_name: d.device_name,
+                    platform: d.platform,
+                    is_trusted: d.is_trusted,
+                    trust_score: d.trust_score,
+                    is_active: d.is_active,
+                    first_seen_at: d.first_seen_at,
+                    last_seen_at: d.last_seen_at,
+                    total_checkins: d.total_checkins
+                })),
+                total
+            };
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     }
 };
