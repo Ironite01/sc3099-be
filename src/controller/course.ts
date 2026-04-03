@@ -20,7 +20,7 @@ async function courseController(fastify: any) {
                 }
             }
         },
-        preHandler: [fastify.authorize(), fastify.rateLimit()]
+        preHandler: [fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {

@@ -232,10 +232,18 @@ export const SessionModel = {
                       AND e.student_id = $${params.length}
                       AND e.is_active = TRUE
                 )`);
+            } else if (role === USER_ROLE_TYPES.TA) {
+                params.push(userId);
+                where.push(`EXISTS (
+                    SELECT 1
+                    FROM course_tas ct
+                    WHERE ct.course_id = s.course_id
+                      AND ct.ta_id = $${params.length}
+                )`);
             } else if (role === USER_ROLE_TYPES.ADMIN) {
                 // Admin sees all sessions - no filter needed
             } else {
-                // Instructor/TA sees only their own sessions
+                // Instructor sees only their own sessions
                 params.push(userId);
                 where.push(`s.instructor_id = $${params.length}`);
             }

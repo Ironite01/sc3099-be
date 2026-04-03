@@ -37,7 +37,7 @@ async function checkinController(fastify: FastifyInstance) {
                 additionalProperties: false
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { session_id } = req.body as any;
         const userId = (req.user as any)?.sub;
@@ -83,7 +83,7 @@ async function checkinController(fastify: FastifyInstance) {
                 additionalProperties: false
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit({
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit({
             limit: 100000,
             window: 60,
             keyGenerator: (req: FastifyRequest) => `rl:checkin:${(req.user as any)?.sub || req.ip}`
@@ -276,7 +276,7 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -393,7 +393,7 @@ async function checkinController(fastify: FastifyInstance) {
     });
 
     fastify.post(`${uri}/:id/appeal`, {
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()],
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()],
         schema: {
             params: {
                 type: 'object',

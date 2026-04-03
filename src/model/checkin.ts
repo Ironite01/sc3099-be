@@ -382,7 +382,12 @@ export const CheckinModel = {
                 where.push(`c.instructor_id = $${params.length}`);
             } else if (user.role === USER_ROLE_TYPES.TA) {
                 params.push(user.sub);
-                where.push(`s.instructor_id = $${params.length}`);
+                where.push(`EXISTS (
+                    SELECT 1
+                    FROM course_tas ct
+                    WHERE ct.course_id = s.course_id
+                      AND ct.ta_id = $${params.length}
+                )`);
             }
 
             if (session_id) {
@@ -552,7 +557,12 @@ export const CheckinModel = {
                     params.push(userId);
                     break;
                 case USER_ROLE_TYPES.TA:
-                    query += ` AND s.instructor_id = $2`;
+                    query += ` AND EXISTS (
+                        SELECT 1
+                        FROM course_tas ct
+                        WHERE ct.course_id = s.course_id
+                          AND ct.ta_id = $2
+                    )`;
                     params.push(userId);
                     break;
                 case USER_ROLE_TYPES.ADMIN:
@@ -587,6 +597,16 @@ export const CheckinModel = {
     },
     getBySessionIdAndUser: async (pgClient: PoolClient, user: { sub: string, role: USER_ROLE_TYPES }, sessionId: string) => {
         try {
+            const roleFilterByUser = user.role === USER_ROLE_TYPES.ADMIN
+                ? ''
+                : user.role === USER_ROLE_TYPES.INSTRUCTOR
+                    ? ' AND s.instructor_id = $2'
+                    : ' AND EXISTS (SELECT 1 FROM course_tas ct WHERE ct.course_id = s.course_id AND ct.ta_id = $2)';
+
+            const params = user.role === USER_ROLE_TYPES.ADMIN
+                ? [sessionId]
+                : [sessionId, user.sub];
+
             const { rows } = await pgClient.query(
                 `SELECT c.id,
                     c.student_id,
@@ -607,9 +627,9 @@ export const CheckinModel = {
              INNER JOIN users u ON u.id = c.student_id
              INNER JOIN sessions s ON s.id = c.session_id
              INNER JOIN devices d on d.id = c.device_id
-             WHERE c.session_id = $1 ${user.role !== USER_ROLE_TYPES.ADMIN ? ' AND s.instructor_id = $2' : ''}
+                 WHERE c.session_id = $1${roleFilterByUser}
              ORDER BY c.checked_in_at DESC`,
-                user.role !== USER_ROLE_TYPES.ADMIN ? [sessionId, user.sub] : [sessionId]
+                     params
             );
 
             const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
