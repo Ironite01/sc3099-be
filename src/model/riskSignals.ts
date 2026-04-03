@@ -1,4 +1,6 @@
-import type { PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
+import type { PrismaClient } from '../generated/prisma/client.js';
+import { AppError, BadRequestError } from './error.js';
 
 export enum RiskSignalSeverity {
     LOW = 'low',
@@ -58,59 +60,42 @@ export function buildRiskSignals(
 
 export const RiskSignalModel = {
     insertRiskSignals: async (
-        pgClient: PoolClient,
+        prisma: PrismaClient,
         checkinId: string,
         signals: Omit<RiskSignal, 'id' | 'checkin_id'>[]
     ): Promise<RiskSignal[]> => {
-        if (!signals.length) {
-            return [];
+        try {
+            if (!signals.length) {
+                return [];
+            }
+
+            return await prisma.risk_signals.createManyAndReturn({
+                data: signals.map(signal => ({
+                    id: randomUUID(),
+                    checkin_id: checkinId,
+                    signal_type: signal.signal_type as any,
+                    severity: signal.severity as any,
+                    confidence: signal.confidence,
+                    details: signal.details as any,
+                    weight: signal.weight,
+                    detected_at: signal.detected_at
+                }))
+            }) as RiskSignal[];
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
         }
-
-        const values: any[] = [];
-        const placeholders = signals.map((signal, index) => {
-            const baseIndex = index * 7;
-            values.push(
-                checkinId,
-                signal.signal_type,
-                signal.severity,
-                signal.confidence,
-                signal.details ? JSON.stringify(signal.details) : null,
-                signal.weight,
-                signal.detected_at
-            );
-            return `(gen_random_uuid()::text, $${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}::jsonb, $${baseIndex + 6}, $${baseIndex + 7})`;
-        });
-
-        const { rows } = await pgClient.query(
-            `INSERT INTO risk_signals (
-                id,
-                checkin_id,
-                signal_type,
-                severity,
-                confidence,
-                details,
-                weight,
-                detected_at
-            ) VALUES ${placeholders.join(', ')}
-            RETURNING id, checkin_id, signal_type, severity, confidence, details, weight, detected_at`,
-            values
-        );
-
-        return rows as RiskSignal[];
     },
-    getRiskSignalsByCheckinIds: async (pgClient: PoolClient, checkinIds: string[]): Promise<Map<string, RiskSignal[]>> => {
+    getRiskSignalsByCheckinIds: async (prisma: PrismaClient, checkinIds: string[]): Promise<Map<string, RiskSignal[]>> => {
         const signalMap = new Map<string, RiskSignal[]>();
         if (!checkinIds.length) {
             return signalMap;
         }
 
-        const { rows } = await pgClient.query(
-            `SELECT id, checkin_id, signal_type, severity, confidence, details, weight, detected_at
-             FROM risk_signals
-             WHERE checkin_id = ANY($1::text[])
-             ORDER BY detected_at ASC, id ASC`,
-            [checkinIds]
-        );
+        const rows = await prisma.risk_signals.findMany({
+            where: { checkin_id: { in: checkinIds } },
+            orderBy: [{ detected_at: 'asc' }, { id: 'asc' }]
+        });
 
         for (const row of rows as RiskSignal[]) {
             const existing = signalMap.get(row.checkin_id) || [];

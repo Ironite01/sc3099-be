@@ -214,6 +214,8 @@ export const DeviceModel = {
                     total_checkins: true,
                     revoked_at: true,
                     revocation_reason: true,
+                    device_fingerprint: true,
+                    public_key: true
                 }
             });
 

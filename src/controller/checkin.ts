@@ -50,9 +50,9 @@ async function checkinController(fastify: FastifyInstance) {
             qr_code
         };
 
-        const pgClient = await fastify.pg.connect();
+        const prisma = await fastify.prisma;
         try {
-            const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
+            const checkin = await CheckinModel.create(prisma, userId, userAgent ? { ...u, userAgent } : u);
 
             let auditAction = AUDIT_ACTIONS.CHECKIN_ATTEMPTED;
             let details = {};
@@ -119,8 +119,6 @@ async function checkinController(fastify: FastifyInstance) {
                 }
             });
             throw err;
-        } finally {
-            pgClient.release();
         }
     });
 
@@ -147,23 +145,19 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const status = (req.query as any).status as CHECKIN_STATUS | undefined;
-            const checkins = await CheckinModel.getFilteredCheckins(pgClient, req.user as any, {
-                ...req.query as any,
-                status: status ? [status] : []
-            });
+        const prisma = await fastify.prisma;
+        const status = (req.query as any).status as CHECKIN_STATUS | undefined;
+        const checkins = await CheckinModel.getFilteredCheckins(prisma, req.user as any, {
+            ...req.query as any,
+            status: status ? [status] : []
+        });
 
-            res.status(200).send({
-                items: checkins.items,
-                total: checkins.total,
-                limit: checkins.limit,
-                offset: checkins.offset
-            });
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send({
+            items: checkins.items,
+            total: checkins.total,
+            limit: checkins.limit,
+            offset: checkins.offset
+        });
     });
 
     fastify.get(`${uri}/my-checkins`, {
@@ -178,24 +172,20 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const studentId = (req.user as any)?.sub;
-            const checkins = await CheckinModel.getFilteredCheckinsByStudentId(pgClient, studentId, req.query as any);
+        const prisma = await fastify.prisma;
+        const studentId = (req.user as any)?.sub;
+        const checkins = await CheckinModel.getFilteredCheckinsByStudentId(prisma, studentId, req.query as any);
 
-            res.status(200).send(checkins.map((c) => ({
-                session_id: c.session_id,
-                session_name: c.session_name,
-                course_id: c.course_id,
-                course_code: c.course_code,
-                course_name: c.course_name,
-                status: c.status,
-                checked_in_at: c.checked_in_at,
-                risk_score: c.risk_score
-            })));
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send(checkins.map((c: any) => ({
+            session_id: c.session_id,
+            session_name: c.session_name,
+            course_id: c.course_id,
+            course_code: c.course_code,
+            course_name: c.course_name,
+            status: c.status,
+            checked_in_at: c.checked_in_at,
+            risk_score: c.risk_score
+        })));
     });
 
     fastify.get(`${uri}/session/:sessionId`, {
@@ -210,28 +200,24 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { sessionId } = req.params as { sessionId: string };
-            const checkins = await CheckinModel.getBySessionIdAndUser(pgClient, req.user as any, sessionId);
+        const prisma = await fastify.prisma;
+        const { sessionId } = req.params as { sessionId: string };
+        const checkins = await CheckinModel.getBySessionIdAndUser(prisma, req.user as any, sessionId);
 
-            res.status(200).send(checkins.map((c) => ({
-                id: c.id,
-                student_id: c.student_id,
-                student_name: c.student_name,
-                student_email: c.student_email,
-                status: c.status,
-                checked_in_at: c.checked_in_at,
-                distance_from_venue_meters: c.distance_from_venue_meters,
-                risk_score: c.risk_score,
-                risk_factors: c.risk_factors,
-                risk_signals: c.risk_signals || [],
-                liveness_passed: c.liveness_passed,
-                device_trusted: c.device_is_trusted
-            })));
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send(checkins.map((c: any) => ({
+            id: c.id,
+            student_id: c.student_id,
+            student_name: c.student_name,
+            student_email: c.student_email,
+            status: c.status,
+            checked_in_at: c.checked_in_at,
+            distance_from_venue_meters: c.distance_from_venue_meters,
+            risk_score: c.risk_score,
+            risk_factors: c.risk_factors,
+            risk_signals: c.risk_signals || [],
+            liveness_passed: c.liveness_passed,
+            device_trusted: c.device_is_trusted
+        })));
     });
 
     fastify.get(`${uri}/flagged`, {
@@ -248,21 +234,24 @@ async function checkinController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN, USER_ROLE_TYPES.TA]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const result = await CheckinModel.getFilteredCheckins(pgClient, req.user as any, {
-                ...req.query as any,
-                status: [CHECKIN_STATUS.FLAGGED, CHECKIN_STATUS.APPEALED]
-            });
-            res.status(200).send({
-                items: result.items,
-                total: result.total,
-                limit: result.limit,
-                offset: result.offset
-            });
-        } finally {
-            pgClient.release();
-        }
+        const prisma = await fastify.prisma;
+        const result = await CheckinModel.getFilteredCheckins(prisma, req.user as any, {
+            ...req.query as any,
+            status: [CHECKIN_STATUS.FLAGGED, CHECKIN_STATUS.APPEALED]
+        });
+        res.status(200).send(result.items.map((i: any) => ({
+            id: i.id,
+            session_id: i.session_id,
+            session_name: i.session_name,
+            student_id: i.student_id,
+            student_name: i.student_name,
+            status: i.status,
+            checked_in_at: i.checked_in_at,
+            risk_score: i.risk_score,
+            risk_factors: i.risk_factors,
+            appeal_reason: i.appeal_reason,
+            appealed_at: i.appealed_at
+        })));
     });
 
     fastify.get(`${uri}/:checkin_id`, {
@@ -277,17 +266,13 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { checkin_id } = req.params as any;
-            const user = req.user as any;
+        const prisma = await fastify.prisma;
+        const { checkin_id } = req.params as any;
+        const user = req.user as any;
 
-            const checkin = await CheckinModel.getByIdAndUser(pgClient, user, checkin_id);
+        const checkin = await CheckinModel.getByIdAndUser(prisma, user, checkin_id);
 
-            res.status(200).send(checkin);
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send(checkin);
     });
 
     fastify.post(`${uri}/:id/appeal`, {
@@ -309,38 +294,34 @@ async function checkinController(fastify: FastifyInstance) {
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { id } = req.params as { id: string };
-            const { appeal_reason } = req.body as { appeal_reason: string };
-            const studentId = (req.user as any)?.sub;
+        const prisma = await fastify.prisma;
+        const { id } = req.params as { id: string };
+        const { appeal_reason } = req.body as { appeal_reason: string };
+        const studentId = (req.user as any)?.sub;
 
-            const result = await CheckinModel.appeal(pgClient, studentId, id, appeal_reason);
+        const result = await CheckinModel.appeal(prisma, studentId, id, appeal_reason);
 
-            await AuditModel.log(await fastify.prisma, {
-                userId: (req.user as any)?.sub,
-                action: AUDIT_ACTIONS.CHECKIN_APPEALED,
-                resourceType,
-                resourceId: id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                success: true,
-                details: {
-                    studentId,
-                    appeal_reason,
-                    appealed_at: result.appealed_at
-                }
-            });
-
-            res.status(200).send({
-                id: result.id,
-                status: result.status,
-                appeal_reason: result.appeal_reason,
+        await AuditModel.log(await fastify.prisma, {
+            userId: (req.user as any)?.sub,
+            action: AUDIT_ACTIONS.CHECKIN_APPEALED,
+            resourceType,
+            resourceId: id,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            success: true,
+            details: {
+                studentId,
+                appeal_reason,
                 appealed_at: result.appealed_at
-            });
-        } finally {
-            pgClient.release();
-        }
+            }
+        });
+
+        res.status(200).send({
+            id: result.id,
+            status: result.status,
+            appeal_reason: result.appeal_reason,
+            appealed_at: result.appealed_at
+        });
     });
 
     fastify.post(`${uri}/:id/review`, {
@@ -359,58 +340,54 @@ async function checkinController(fastify: FastifyInstance) {
                 properties: {
                     status: { type: 'string', enum: [CHECKIN_STATUS.APPROVED, CHECKIN_STATUS.REJECTED] },
                     review_notes: { type: 'string', maxLength: 2000 }
-                }
+                },
             }
         }
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const result = await CheckinModel.review(pgClient, (req.params as any).id, {
-                user: req.user as any,
-                status: (req.body as any).status,
-                notes: (req.body as any).review_notes
-            });
+        const prisma = await fastify.prisma;
+        const result = await CheckinModel.review(prisma, (req.params as any).id, {
+            user: req.user as any,
+            status: (req.body as any).status,
+            notes: (req.body as any).review_notes
+        });
 
-            const auditAction = result.status === CHECKIN_STATUS.APPROVED
-                ? AUDIT_ACTIONS.CHECKIN_APPROVED
-                : result.status === CHECKIN_STATUS.REJECTED
-                    ? AUDIT_ACTIONS.CHECKIN_REJECTED
-                    : AUDIT_ACTIONS.CHECKIN_REVIEWED;
+        const auditAction = result.status === CHECKIN_STATUS.APPROVED
+            ? AUDIT_ACTIONS.CHECKIN_APPROVED
+            : result.status === CHECKIN_STATUS.REJECTED
+                ? AUDIT_ACTIONS.CHECKIN_REJECTED
+                : AUDIT_ACTIONS.CHECKIN_REVIEWED;
 
-            let details;
-            if (result.status === CHECKIN_STATUS.APPROVED) {
-                details = { checkin_id: result.id, reviewer_id: result.reviewed_by_id };
-            } else if (result.status === CHECKIN_STATUS.REJECTED) {
-                details = { checkin_id: result.id, reason: result.review_notes };
-            } else {
-                details = {
-                    new_status: result.status,
-                    reviewed_at: result.reviewed_at,
-                    review_notes: result.review_notes
-                }
-            }
-
-            await AuditModel.log(await fastify.prisma, {
-                userId: (req.user as any)?.sub,
-                action: auditAction,
-                resourceType,
-                resourceId: result.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                success: true,
-                details
-            });
-
-            res.status(200).send({
-                id: result.id,
-                status: result.status,
-                reviewed_by_id: result.reviewed_by_id,
+        let details;
+        if (result.status === CHECKIN_STATUS.APPROVED) {
+            details = { checkin_id: result.id, reviewer_id: result.reviewed_by_id };
+        } else if (result.status === CHECKIN_STATUS.REJECTED) {
+            details = { checkin_id: result.id, reason: result.review_notes };
+        } else {
+            details = {
+                new_status: result.status,
                 reviewed_at: result.reviewed_at,
                 review_notes: result.review_notes
-            });
-        } finally {
-            pgClient.release();
+            }
         }
+
+        await AuditModel.log(await fastify.prisma, {
+            userId: (req.user as any)?.sub,
+            action: auditAction,
+            resourceType,
+            resourceId: result.id,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            success: true,
+            details
+        });
+
+        res.status(200).send({
+            id: result.id,
+            status: result.status,
+            reviewed_by_id: result.reviewed_by_id,
+            reviewed_at: result.reviewed_at,
+            review_notes: result.review_notes
+        });
     });
 }
 

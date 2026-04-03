@@ -1,8 +1,10 @@
-import type { PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
+import type { PrismaClient } from '../generated/prisma/client.js';
 import { AppError, BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from './error.js';
 import { SESSION_STATUS, SessionModel } from './session.js';
-import { DeviceModel } from './device.js';
+import { DeviceModel, TRUST_SCORE_TYPES } from './device.js';
 import { EnrollmentModel } from './enrollment.js';
+import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
 import haversineDistance from '../helpers/haversineDistance.js';
 import { MlServices } from '../services/ml/index.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
@@ -50,32 +52,28 @@ export type Checkin = {
 };
 
 export const CheckinModel = {
-    create: async function create(
-        transact: (fn: (pgClient: PoolClient) => Promise<any>) => Promise<any>,
-        studentId: string,
-        payload: {
-            ipAddr: string;
-            userAgent?: string;
-            session_id: string;
-            latitude: number;
-            longitude: number;
-            location_accuracy_meters: number;
-            device_fingerprint: string;
-            liveness_challenge_response?: any;
-            liveness_challenge_type?: LivenessChallengeType;
-            qr_code?: string;
-        }
-    ) {
+    create: async (prisma: PrismaClient, studentId: string, payload: {
+        ipAddr: string;
+        userAgent?: string;
+        session_id: string;
+        latitude: number;
+        longitude: number;
+        location_accuracy_meters: number;
+        device_fingerprint: string;
+        liveness_challenge_response?: any;
+        liveness_challenge_type?: LivenessChallengeType;
+        qr_code?: string;
+    }) => {
         try {
             const { session_id, latitude, longitude, location_accuracy_meters, device_fingerprint, liveness_challenge_response = null, liveness_challenge_type = LivenessChallengeType.PASSIVE, qr_code, ipAddr, userAgent } = payload;
-            return await transact(async (pgClient) => {
+            return await prisma.$transaction(async (tx) => {
                 // 1. Validate device
-                const device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
+                const device = await DeviceModel.getByFingerprintAndUserId(tx as any, studentId, device_fingerprint);
                 if (!device || !device.is_active || device.revoked_at) {
                     throw new BadRequestError('Device is not allowed for check-in');
                 }
                 // 2. Validate session
-                const session = await SessionModel.getById(pgClient, session_id);
+                const session = await SessionModel.getById(tx as any, session_id);
                 if (!session) {
                     throw new BadRequestError('Session not found');
                 }
@@ -115,7 +113,7 @@ export const CheckinModel = {
                 }
 
                 // 4. Validate enrollment
-                const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(pgClient, studentId, session.course_id);
+                const enrollment = await EnrollmentModel.getEnrollmentByStudentIdAndCourseId(tx as any, studentId, session.course_id);
                 if (!enrollment) {
                     throw new BadRequestError('Student is not enrolled in this course');
                 }
@@ -131,7 +129,7 @@ export const CheckinModel = {
                 const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
 
                 // 6. Liveness check and face verification
-                const user = await UserModel.getById(pgClient, studentId);
+                const user = await UserModel.getById(tx as any, studentId);
                 if (!user || !user.is_active || !user.face_embedding_hash) {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
@@ -228,56 +226,56 @@ export const CheckinModel = {
                 }
 
                 try {
-                    const { rows } = await pgClient.query(
-                        `INSERT INTO checkins (
-                id, session_id, device_id, student_id, status, checked_in_at,
-                latitude, longitude, distance_from_venue_meters,
-                liveness_passed, liveness_score, risk_score, risk_factors,
-                location_accuracy_meters, liveness_challenge_type,
-                face_match_passed, face_match_score, face_embedding_hash, qr_code_verified
-            ) VALUES (
-                gen_random_uuid()::text, $1, $2, $3, $4, $5,
-                $6, $7, $8,
-                $9, $10, $11, $12,
-                $13, $14, $15, $16, $17, $18
-            )
-            RETURNING id, session_id, student_id, status, checked_in_at,
-                      latitude, longitude, distance_from_venue_meters,
-                      liveness_passed, liveness_score, risk_score, risk_factors`,
-                        [
-                            session_id,
-                            device.id,
-                            studentId,
-                            status,
-                            now,
-                            latitude,
-                            longitude,
-                            diffDist,
-                            livenessPassed,
-                            livenessScore,
-                            risk_score,
-                            JSON.stringify(riskFactors),
-                            location_accuracy_meters,
-                            liveness_challenge_type,
-                            matchPassed,
-                            matchScore,
-                            faceEmbeddingHash,
-                            requireQr
-                        ]
-                    );
+                    const checkin = await tx.checkins.create({
+                        data: {
+                            id: randomUUID(),
+                            session_id: session_id,
+                            device_id: device.id,
+                            student_id: studentId,
+                            status: status,
+                            checked_in_at: now,
+                            latitude: latitude,
+                            longitude: longitude,
+                            distance_from_venue_meters: diffDist,
+                            liveness_passed: livenessPassed,
+                            liveness_score: livenessScore,
+                            risk_score: risk_score,
+                            risk_factors: JSON.stringify(riskFactors),
+                            location_accuracy_meters: location_accuracy_meters,
+                            liveness_challenge_type: liveness_challenge_type,
+                            face_match_passed: matchPassed,
+                            face_match_score: matchScore,
+                            face_embedding_hash: faceEmbeddingHash,
+                            qr_code_verified: requireQr
+                        },
+                        select: {
+                            id: true,
+                            session_id: true,
+                            student_id: true,
+                            status: true,
+                            checked_in_at: true,
+                            latitude: true,
+                            longitude: true,
+                            distance_from_venue_meters: true,
+                            liveness_passed: true,
+                            liveness_score: true,
+                            risk_score: true,
+                            risk_factors: true
+                        }
+                    });
 
                     // 8. Update relevant records after check in
-                    const persistedRiskSignals = await RiskSignalModel.insertRiskSignals(pgClient, rows[0].id as string, riskSignals);
+                    const persistedRiskSignals = await RiskSignalModel.insertRiskSignals(tx as any, checkin.id, riskSignals);
 
-                    await DeviceModel.updateAfterCheckin(pgClient, device.id, getRiskLevel(risk_score));
+                    await DeviceModel.updateAfterCheckin(tx as any, device.id, getRiskLevel(risk_score) as TRUST_SCORE_TYPES);
 
                     return {
-                        ...rows[0],
+                        ...checkin,
                         recommendations,
                         risk_signals: persistedRiskSignals
-                    } as (Checkin & { recommendations?: string[] });
+                    } as any;
                 } catch (err: any) {
-                    if (err.code === '23505') {
+                    if (err.code === PrismaCodeMap.CONFLICT) {
                         throw new BadRequestError('Student has already checked in for this session');
                     }
                     throw err;
@@ -288,7 +286,7 @@ export const CheckinModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    getFilteredCheckins: async (pgClient: PoolClient, user: { sub: string; role: USER_ROLE_TYPES }, data: {
+    getFilteredCheckins: async (prisma: PrismaClient, user: { sub: string; role: USER_ROLE_TYPES }, data: {
         session_id?: string;
         course_id?: string;
         student_id?: string;
@@ -314,106 +312,82 @@ export const CheckinModel = {
                 offset = 0
             } = data;
 
-            const params: any[] = [];
-            const where: string[] = [];
+            const where: any = {};
 
             // Instructors only can see checkins related to their courses
-            // They should see checkins for all sessions in their courses
             if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                params.push(user.sub);
-                where.push(`c.instructor_id = $${params.length}`);
+                where.sessions = {
+                    courses: {
+                        instructor_id: user.sub
+                    }
+                };
             } else if (user.role === USER_ROLE_TYPES.TA) {
-                params.push(user.sub);
-                where.push(`s.instructor_id = $${params.length}`);
+                where.sessions = {
+                    instructor_id: user.sub
+                };
             }
 
-            if (session_id) {
-                params.push(session_id);
-                where.push(`ci.session_id = $${params.length}`);
-            }
-            if (course_id) {
-                params.push(course_id);
-                where.push(`s.course_id = $${params.length}`);
-            }
-            if (student_id) {
-                params.push(student_id);
-                where.push(`ci.student_id = $${params.length}`);
-            }
-            if (status && status.length > 0) {
-                params.push(status);
-                where.push(`ci.status = ANY($${params.length}::text[])`);
-            }
-            if (min_risk_score !== undefined) {
-                params.push(min_risk_score);
-                where.push(`ci.risk_score >= $${params.length}`);
-            }
-            if (max_risk_score !== undefined) {
-                params.push(max_risk_score);
-                where.push(`ci.risk_score <= $${params.length}`);
-            }
-            if (start_date) {
-                params.push(start_date);
-                where.push(`ci.checked_in_at >= $${params.length}`);
-            }
-            if (end_date) {
-                params.push(end_date);
-                where.push(`ci.checked_in_at <= $${params.length}`);
-            }
+            if (session_id) where.session_id = session_id;
+            if (course_id) where.sessions = { ...where.sessions, course_id };
+            if (student_id) where.student_id = student_id;
+            if (status && status.length > 0) where.status = { in: status };
+            if (min_risk_score !== undefined) where.risk_score = { ...where.risk_score, gte: min_risk_score };
+            if (max_risk_score !== undefined) where.risk_score = { ...where.risk_score, lte: max_risk_score };
+            if (start_date) where.checked_in_at = { ...where.checked_in_at, gte: new Date(start_date) };
+            if (end_date) where.checked_in_at = { ...where.checked_in_at, lte: new Date(end_date) };
 
-            const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+            const [total, checkins] = await Promise.all([
+                prisma.checkins.count({ where }),
+                prisma.checkins.findMany({
+                    where,
+                    select: {
+                        id: true,
+                        session_id: true,
+                        sessions: { select: { name: true, actual_start: true, course_id: true, courses: { select: { code: true } } } },
+                        student_id: true,
+                        users_checkins_student_idTousers: { select: { full_name: true, email: true } },
+                        status: true,
+                        checked_in_at: true,
+                        distance_from_venue_meters: true,
+                        risk_score: true,
+                        risk_factors: true,
+                        liveness_passed: true,
+                        appealed_at: true,
+                        appeal_reason: true
+                    },
+                    orderBy: { checked_in_at: 'desc' },
+                    take: limit,
+                    skip: offset
+                })
+            ]);
 
-            const countResult = await pgClient.query(
-                `SELECT COUNT(*)::int AS total
-                 FROM checkins ci
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 ${whereClause}`,
-                params
-            );
-
-            if (Number.isFinite(limit)) {
-                params.push(limit);
-            }
-            params.push(offset);
-
-            const { rows } = await pgClient.query(
-                `SELECT ci.id,
-                        ci.session_id,
-                        s.name AS session_name,
-                        TO_CHAR(s.actual_start AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS session_date,
-                        ci.student_id,
-                        u.full_name AS student_name,
-                        u.email AS student_email,
-                        ci.status,
-                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
-                        ci.distance_from_venue_meters,
-                        ci.risk_score,
-                        ci.risk_factors,
-                        ci.liveness_passed,
-                        ci.appealed_at,
-                        ci.appeal_reason,
-                        c.code AS course_code
-                 FROM checkins ci
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 JOIN users u ON u.id = ci.student_id
-                 ${whereClause}
-                 ORDER BY ci.checked_in_at DESC
-                 ${Number.isFinite(limit) ? `LIMIT $${params.length - 1}` : ''}
-                 OFFSET $${params.length}`,
-                params
-            );
-
-            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
-            const items = rows.map((row) => ({
-                ...row,
-                risk_factors: normalizeRiskFactors(row.risk_factors),
-                risk_signals: signalMap.get(row.id as string) || []
+            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(prisma, checkins.map(c => c.id));
+            const items: any = checkins.map(c => ({
+                id: c.id,
+                session_id: c.session_id,
+                session_name: c.sessions?.name,
+                session_date: c.sessions?.actual_start,
+                course_id: c.sessions?.course_id,
+                course_code: c.sessions?.courses?.code,
+                student_id: c.student_id,
+                student_name: c.users_checkins_student_idTousers?.full_name,
+                student_email: c.users_checkins_student_idTousers?.email,
+                status: c.status,
+                checked_in_at: c.checked_in_at,
+                distance_from_venue_meters: c.distance_from_venue_meters,
+                risk_score: c.risk_score,
+                risk_factors: normalizeRiskFactors(c.risk_factors),
+                liveness_passed: c.liveness_passed,
+                appealed_at: c.appealed_at,
+                appeal_reason: c.appeal_reason,
+                risk_signals: signalMap.get(c.id) || []
             }));
+            delete items.sessions;
+            delete items.users_checkins_student_idTousers;
 
             return {
-                items: items as (Checkin & { course_code: string; session_date: Date | string; session_name: string; student_name: string; student_email: string })[],
-                total: countResult.rows[0]?.total ?? 0,
+                items,
+                total,
                 limit,
                 offset
             }
@@ -422,80 +396,65 @@ export const CheckinModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    getFilteredCheckinsByStudentId: async (pgClient: PoolClient, studentId: string, filters: { limit?: number; course_id?: string }) => {
+    getFilteredCheckinsByStudentId: async (prisma: PrismaClient, studentId: string, filters: { limit?: number; course_id?: string }) => {
         try {
             if (!studentId) {
                 throw new UnauthorizedError();
             }
 
             const { course_id, limit = 50 } = filters;
-            const params: any[] = [studentId];
-            let where = 'WHERE ci.student_id = $1';
+            const where: any = { student_id: studentId };
+            if (course_id) where.sessions = { course_id };
 
-            if (course_id) {
-                params.push(course_id);
-                where += ` AND s.course_id = $${params.length}`;
-            }
+            const checkins = await prisma.checkins.findMany({
+                where,
+                select: {
+                    id: true,
+                    session_id: true,
+                    sessions: { select: { name: true, course_id: true, courses: { select: { code: true, name: true } } } },
+                    status: true,
+                    checked_in_at: true,
+                    risk_score: true
+                },
+                orderBy: { checked_in_at: 'desc' },
+                take: Math.max(1, Math.min(limit, 200))
+            });
 
-            params.push(Math.max(1, Math.min(limit, 200)));
+            const data: any = checkins.map(c => ({
+                id: c.id,
+                session_id: c.session_id,
+                session_name: c.sessions?.name,
+                course_id: c.sessions?.course_id,
+                course_code: c.sessions?.courses?.code,
+                course_name: c.sessions?.courses?.name,
+                status: c.status,
+                checked_in_at: c.checked_in_at,
+                risk_score: c.risk_score
+            }));
 
-            const { rows } = await pgClient.query(
-                `SELECT ci.id,
-                    ci.session_id,
-                    s.name AS session_name,
-                    s.course_id as course_id,
-                    c.code AS course_code,
-                    c.name AS course_name,
-                    ci.status,
-                    TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
-                    ci.risk_score
-             FROM checkins ci
-             JOIN sessions s ON s.id = ci.session_id
-             JOIN courses c ON c.id = s.course_id
-             ${where}
-             ORDER BY ci.checked_in_at DESC
-             LIMIT $${params.length}`,
-                params
-            );
-
-            return rows as (Partial<Checkin> & { session_name: string; course_id: string; course_code: string; course_name: string })[];
-
+            delete data.sessions;
+            return data;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getByIdAndUser: async (pgClient: PoolClient, user: { sub: string, role: USER_ROLE_TYPES }, checkin_id: string) => {
+    getByIdAndUser: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, checkin_id: string) => {
         try {
             const role = user.role as USER_ROLE_TYPES;
             const userId = user.sub as string;
 
-            let query = `SELECT ci.id, ci.session_id, ci.student_id, ci.status,
-                        TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
-                        ci.latitude, ci.longitude, ci.distance_from_venue_meters,
-                        ci.liveness_passed, ci.liveness_score, ci.risk_score, ci.risk_factors,
-                        s.course_id, s.name AS session_name,
-                        c.code AS course_code, c.name AS course_name, ci.appealed_at,
-                        u.full_name AS student_name, u.email AS student_email
-                 FROM checkins ci
-                 JOIN sessions s ON s.id = ci.session_id
-                 JOIN courses c ON c.id = s.course_id
-                 JOIN users u ON u.id = ci.student_id
-                 WHERE ci.id = $1`;
-            let params = [checkin_id];
+            const where: any = { id: checkin_id };
 
             switch (role) {
                 case USER_ROLE_TYPES.STUDENT:
-                    query += ` AND ci.student_id = $2`;
-                    params.push(userId);
+                    where.student_id = userId;
                     break;
                 case USER_ROLE_TYPES.INSTRUCTOR:
-                    query += ` AND c.instructor_id = $2`;
-                    params.push(userId);
+                    where.sessions = { courses: { instructor_id: userId } };
                     break;
                 case USER_ROLE_TYPES.TA:
-                    query += ` AND s.instructor_id = $2`;
-                    params.push(userId);
+                    where.sessions = { instructor_id: userId };
                     break;
                 case USER_ROLE_TYPES.ADMIN:
                     // Do nothing...
@@ -504,70 +463,123 @@ export const CheckinModel = {
                     throw new UnauthorizedError();
             }
 
-            const { rows } = await pgClient.query(query, params);
+            const result = await prisma.checkins.findFirst({
+                where,
+                select: {
+                    id: true,
+                    session_id: true,
+                    student_id: true,
+                    status: true,
+                    checked_in_at: true,
+                    latitude: true,
+                    longitude: true,
+                    distance_from_venue_meters: true,
+                    liveness_passed: true,
+                    liveness_score: true,
+                    risk_score: true,
+                    risk_factors: true,
+                    appealed_at: true,
+                    sessions: { select: { course_id: true, name: true, courses: { select: { code: true, name: true } } } },
+                    users_checkins_student_idTousers: { select: { full_name: true, email: true } }
+                }
+            });
 
-            if (rows.length === 0) {
+            if (!result) {
                 throw new NotFoundError();
             }
 
-            const result = rows[0] as (Checkin & {
-                session_name: string;
-                course_id: string;
-                course_code: string;
-                course_name: string;
-                student_name: string;
-                student_email: string;
-            });
-            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(pgClient, [result.id]);
-            result.risk_factors = normalizeRiskFactors(result.risk_factors);
-            result.risk_signals = signalMap.get(result.id) || [];
-            return result;
+            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(prisma, [result.id]);
+            const data: any = {
+                ...result,
+                session_name: result.sessions?.name,
+                course_id: result.sessions?.course_id,
+                course_code: result.sessions?.courses?.code,
+                course_name: result.sessions?.courses?.name,
+                student_name: result.users_checkins_student_idTousers?.full_name,
+                student_email: result.users_checkins_student_idTousers?.email,
+                risk_factors: normalizeRiskFactors(result.risk_factors),
+                risk_signals: signalMap.get(result.id) || []
+            };
+            delete data.sessions;
+            delete data.users_checkins_student_idTousers;
+            return data;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    getBySessionIdAndUser: async (pgClient: PoolClient, user: { sub: string, role: USER_ROLE_TYPES }, sessionId: string) => {
+    getBySessionIdAndUser: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, sessionId: string) => {
         try {
-            const { rows } = await pgClient.query(
-                `SELECT c.id,
-                    c.student_id,
-                    u.full_name AS student_name,
-                    u.email AS student_email,
-                    c.status,
-                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS timestamp,
-                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
-                    c.latitude,
-                    c.longitude,
-                    c.distance_from_venue_meters,
-                    c.liveness_passed,
-                    c.liveness_score,
-                    c.risk_score,
-                    c.risk_factors,
-                    d.is_trusted as device_is_trusted
-             FROM checkins c
-             INNER JOIN users u ON u.id = c.student_id
-             INNER JOIN sessions s ON s.id = c.session_id
-             INNER JOIN devices d on d.id = c.device_id
-             WHERE c.session_id = $1 ${user.role !== USER_ROLE_TYPES.ADMIN ? ' AND s.instructor_id = $2' : ''}
-             ORDER BY c.checked_in_at DESC`,
-                user.role !== USER_ROLE_TYPES.ADMIN ? [sessionId, user.sub] : [sessionId]
-            );
+            const where: any = { session_id: sessionId };
 
-            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(pgClient, rows.map((row) => row.id as string));
-            return rows.map((row) => ({
-                ...row,
-                risk_factors: normalizeRiskFactors(row.risk_factors),
-                risk_signals: signalMap.get(row.id as string) || []
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                where.sessions = {
+                    OR: [
+                        { instructor_id: user.sub },
+                        { courses: { instructor_id: user.sub } }
+                    ]
+                };
+            } else if (user.role === USER_ROLE_TYPES.TA) {
+                where.sessions = {
+                    instructor_id: user.sub
+                };
+            } else if (user.role === USER_ROLE_TYPES.STUDENT) {
+                throw new ForbiddenError();
+            }
+
+            const checkins = await prisma.checkins.findMany({
+                where,
+                select: {
+                    id: true,
+                    student_id: true,
+                    users_checkins_student_idTousers: { select: { full_name: true, email: true } },
+                    status: true,
+                    checked_in_at: true,
+                    latitude: true,
+                    longitude: true,
+                    distance_from_venue_meters: true,
+                    liveness_passed: true,
+                    liveness_score: true,
+                    risk_score: true,
+                    risk_factors: true,
+                    devices: { select: { is_trusted: true } }
+                },
+                orderBy: { checked_in_at: 'desc' }
+            });
+
+            const signalMap = await RiskSignalModel.getRiskSignalsByCheckinIds(prisma, checkins.map(c => c.id));
+
+            const data: any = checkins.map(c => ({
+                id: c.id,
+                student_id: c.student_id,
+                student_name: c.users_checkins_student_idTousers?.full_name,
+                student_email: c.users_checkins_student_idTousers?.email,
+                status: c.status,
+                timestamp: c.checked_in_at,
+                checked_in_at: c.checked_in_at,
+                latitude: c.latitude,
+                longitude: c.longitude,
+                distance_from_venue_meters: c.distance_from_venue_meters,
+                liveness_passed: c.liveness_passed,
+                liveness_score: c.liveness_score,
+                risk_score: c.risk_score,
+                risk_factors: normalizeRiskFactors(c.risk_factors),
+                device_is_trusted: c.devices?.is_trusted,
+                risk_signals: signalMap.get(c.id) || []
             }));
+
+            delete data.users_checkins_student_idTousers;
+            delete data.devices;
+
+            return data;
         } catch (err: any) {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
     },
-    appeal: async (pgClient: PoolClient, studentId: string, checkinId: string, appeal_reason: string) => {
+    appeal: async (prisma: PrismaClient, studentId: string, checkinId: string, appeal_reason: string) => {
         try {
-            const currentCheckin = await CheckinModel.getByIdAndUser(pgClient, { sub: studentId, role: USER_ROLE_TYPES.STUDENT }, checkinId);
+            const currentCheckin = await CheckinModel.getByIdAndUser(prisma, { sub: studentId, role: USER_ROLE_TYPES.STUDENT }, checkinId);
             if (!currentCheckin) {
                 throw new NotFoundError();
             }
@@ -585,15 +597,20 @@ export const CheckinModel = {
                 throw new BadRequestError('Appeal window has expired');
             }
 
-            const { rows } = await pgClient.query(
-                `UPDATE checkins
-                 SET status = $4, appeal_reason = $3, appealed_at = NOW()
-                 WHERE id = $1 AND student_id = $2
-                 RETURNING id, status, appeal_reason, appealed_at`,
-                [checkinId, studentId, appeal_reason, CHECKIN_STATUS.APPEALED]
-            );
-
-            const updated = rows[0] as Partial<Checkin>;
+            const updated = await prisma.checkins.update({
+                where: { id: checkinId, student_id: studentId },
+                data: {
+                    status: CHECKIN_STATUS.APPEALED,
+                    appeal_reason: appeal_reason,
+                    appealed_at: new Date()
+                },
+                select: {
+                    id: true,
+                    status: true,
+                    appeal_reason: true,
+                    appealed_at: true
+                }
+            });
 
             return {
                 id: updated.id,
@@ -606,9 +623,9 @@ export const CheckinModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    review: async (pgClient: PoolClient, id: string, { user, status, notes }: { user: { sub: string, role: USER_ROLE_TYPES }, status: CHECKIN_STATUS, notes?: string }) => {
+    review: async (prisma: PrismaClient, id: string, { user, status, notes }: { user: { sub: string, role: USER_ROLE_TYPES }, status: CHECKIN_STATUS, notes?: string }) => {
         try {
-            const currentCheckin = await CheckinModel.getByIdAndUser(pgClient, user, id);
+            const currentCheckin = await CheckinModel.getByIdAndUser(prisma, user, id);
             if (!currentCheckin) {
                 throw new NotFoundError();
             }
@@ -616,12 +633,15 @@ export const CheckinModel = {
                 throw new BadRequestError('Only flagged or appealed check-ins can be reviewed');
             }
 
-            await pgClient.query(
-                `UPDATE checkins
-                 SET status = $2, reviewed_by_id = $3, reviewed_at = NOW(), review_notes = $4
-                 WHERE id = $1`,
-                [id, status, user.sub, notes ?? null]
-            );
+            await prisma.checkins.update({
+                where: { id },
+                data: {
+                    status: status,
+                    reviewed_by_id: user.sub,
+                    reviewed_at: new Date(),
+                    review_notes: notes ?? null
+                }
+            });
 
             return {
                 id,
