@@ -23,7 +23,8 @@ async function sessionController(fastify: any) {
                     end_date: { type: 'string', format: 'date-time' },
                     limit: { type: 'integer', default: 50 },
                     offset: { type: 'integer', default: 0 }
-                }
+                },
+                additionalProperties: false
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
@@ -140,7 +141,7 @@ async function sessionController(fastify: any) {
         }
         const session = await SessionModel.create(prisma, req.body as any);
 
-        await AuditModel.log(await fastify.pg.connect(), {
+        await AuditModel.log(prisma, {
             userId: user.sub,
             action: AUDIT_ACTIONS.SESSION_CREATED,
             resourceType,

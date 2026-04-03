@@ -96,7 +96,7 @@ async function deviceController(fastify: FastifyInstance) {
                         type: 'boolean'
                     }
                 },
-                required: ['device_fingerprint', 'public_key'],
+                required: ['device_fingerprint'],
                 additionalProperties: false
             }
         }

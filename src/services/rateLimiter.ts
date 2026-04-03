@@ -23,7 +23,7 @@ async function rateLimiter(fastify: FastifyInstance) {
         return async (request: FastifyRequest, reply: FastifyReply) => {
             const keyGenerator = options.keyGenerator || ((req: FastifyRequest) => `${(req.user as any)?.sub || req.ip}`);
             const key = keyGenerator(request);
-            const limit = options.limit || 1000;
+            const limit = fastify.config.REDIS_LIMIT_HIGH === 'true' ? 100000 : (options.limit || 1000);
             const window = options.window || 3600;
 
             try {

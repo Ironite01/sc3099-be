@@ -14,6 +14,10 @@ import adminController from './admin.js';
 import { BASE_URL } from '../helpers/constants.js';
 
 async function controller(fastify: FastifyInstance) {
+    fastify.get(`/health`, async (_req, res) => {
+        res.status(200).send({ status: 'healthy', api: 'up' });
+    });
+
     fastify.get(`${BASE_URL}/health`, async (_req, res) => {
         res.status(200).send({ status: 'healthy', api: 'up' });
     });

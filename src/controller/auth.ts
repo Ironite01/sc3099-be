@@ -187,6 +187,13 @@ async function authController(fastify: FastifyInstance) {
                 maxAge: REFRESH_TOKEN_TTL
             });
         }
+
+        res.status(200).send({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            token_type: "bearer",
+            user
+        });
     });
 
     fastify.post(`${uri}/refresh`, {

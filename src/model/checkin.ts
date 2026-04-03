@@ -100,7 +100,15 @@ export const CheckinModel = {
                 }
 
                 // 2. Validate session
-                const session = await SessionModel.getById(tx as any, session_id);
+                let session;
+                try {
+                    session = await SessionModel.getById(tx as any, session_id);
+                } catch (err) {
+                    if (err instanceof NotFoundError) {
+                        throw new BadRequestError('Session not found');
+                    }
+                    throw err;
+                }
                 if (!session) {
                     throw new BadRequestError('Session not found');
                 }
@@ -187,7 +195,15 @@ export const CheckinModel = {
                 const requireLiveness = session.require_liveness_check === true;
                 const requireFaceMatch = session.require_face_match === true;
 
-                const user = await UserModel.getById(tx as any, studentId);
+                let user;
+                try {
+                    user = await UserModel.getById(tx as any, studentId);
+                } catch (err) {
+                    if (err instanceof NotFoundError) {
+                        throw new BadRequestError('User not found');
+                    }
+                    throw err;
+                }
                 if (!user || !user.is_active || (requireFaceMatch && !user.face_embedding_hash)) {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }

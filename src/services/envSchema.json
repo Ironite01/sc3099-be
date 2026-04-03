@@ -12,9 +12,14 @@
         "POSTGRES_DB",
         "JWT_SECRET",
         "REDIS_HOST",
-        "REDIS_PORT"
+        "REDIS_PORT",
+        "REDIS_LIMIT_HIGH"
     ],
     "properties": {
+        "REDIS_LIMIT_HIGH": {
+            "type": "string",
+            "default": "false"
+        },
         "PORT": {
             "type": "string",
             "default": 8000
