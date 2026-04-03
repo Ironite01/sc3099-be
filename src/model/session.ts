@@ -202,31 +202,27 @@ export const SessionModel = {
             const where: any = {};
 
             if (role === USER_ROLE_TYPES.STUDENT) {
-                where.courses = {
-                    enrollments: {
-                        some: {
-                            student_id: userId,
-                            is_active: true
-                        }
-                    }
-                };
-            } else if (role === USER_ROLE_TYPES.INSTRUCTOR) {
-                // Instructors see sessions in courses they teach OR sessions they teach directly
-                where.OR = [
-                    {
-                        courses: {
-                            is: {
-                                instructor_id: userId
-                            }
-                        }
-                    },
-                    {
-                        instructor_id: userId
-                    }
-                ];
+                params.push(userId);
+                where.push(`EXISTS (
+                    SELECT 1 FROM enrollments e
+                    WHERE e.course_id = s.course_id
+                      AND e.student_id = $${params.length}
+                      AND e.is_active = TRUE
+                )`);
             } else if (role === USER_ROLE_TYPES.TA) {
-                // TAs see only sessions they teach
-                where.instructor_id = userId;
+                params.push(userId);
+                where.push(`EXISTS (
+                    SELECT 1
+                    FROM course_tas ct
+                    WHERE ct.course_id = s.course_id
+                      AND ct.ta_id = $${params.length}
+                )`);
+            } else if (role === USER_ROLE_TYPES.ADMIN) {
+                // Admin sees all sessions - no filter needed
+            } else {
+                // Instructor sees only their own sessions
+                params.push(userId);
+                where.push(`s.instructor_id = $${params.length}`);
             }
 
             if (status) where.status = status;

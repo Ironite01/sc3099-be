@@ -455,9 +455,13 @@ export const CheckinModel = {
                     }
                 };
             } else if (user.role === USER_ROLE_TYPES.TA) {
-                where.sessions = {
-                    instructor_id: user.sub
-                };
+                params.push(user.sub);
+                where.push(`EXISTS (
+                    SELECT 1
+                    FROM course_tas ct
+                    WHERE ct.course_id = s.course_id
+                      AND ct.ta_id = $${params.length}
+                )`);
             }
 
             if (session_id) where.session_id = session_id;
@@ -614,7 +618,13 @@ export const CheckinModel = {
                     where.sessions = { courses: { instructor_id: userId } };
                     break;
                 case USER_ROLE_TYPES.TA:
-                    where.sessions = { instructor_id: userId };
+                    query += ` AND EXISTS (
+                        SELECT 1
+                        FROM course_tas ct
+                        WHERE ct.course_id = s.course_id
+                          AND ct.ta_id = $2
+                    )`;
+                    params.push(userId);
                     break;
                 case USER_ROLE_TYPES.ADMIN:
                     // Do nothing...
@@ -670,7 +680,40 @@ export const CheckinModel = {
     },
     getBySessionIdAndUser: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, sessionId: string) => {
         try {
-            let where: any = { session_id: sessionId };
+            const roleFilterByUser = user.role === USER_ROLE_TYPES.ADMIN
+                ? ''
+                : user.role === USER_ROLE_TYPES.INSTRUCTOR
+                    ? ' AND s.instructor_id = $2'
+                    : ' AND EXISTS (SELECT 1 FROM course_tas ct WHERE ct.course_id = s.course_id AND ct.ta_id = $2)';
+
+            const params = user.role === USER_ROLE_TYPES.ADMIN
+                ? [sessionId]
+                : [sessionId, user.sub];
+
+            const { rows } = await pgClient.query(
+                `SELECT c.id,
+                    c.student_id,
+                    u.full_name AS student_name,
+                    u.email AS student_email,
+                    c.status,
+                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS timestamp,
+                    TO_CHAR(c.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                    c.latitude,
+                    c.longitude,
+                    c.distance_from_venue_meters,
+                    c.liveness_passed,
+                    c.liveness_score,
+                    c.risk_score,
+                    c.risk_factors,
+                    d.is_trusted as device_is_trusted
+             FROM checkins c
+             INNER JOIN users u ON u.id = c.student_id
+             INNER JOIN sessions s ON s.id = c.session_id
+             INNER JOIN devices d on d.id = c.device_id
+                 WHERE c.session_id = $1${roleFilterByUser}
+             ORDER BY c.checked_in_at DESC`,
+                     params
+            );
 
             if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
                 where = {

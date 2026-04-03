@@ -47,18 +47,20 @@ async function statsController(fastify: FastifyInstance) {
                 properties: { sessionId: { type: 'string' } }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.TA, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { sessionId } = req.params as { sessionId: string };
-        const cacheKey = generateStatsCacheKey('session', sessionId);
-
-        // Try to get from cache
-        let data = await getCache(fastify.redis, cacheKey);
-
-        if (!data) {
-            data = await StatsModel.getSessionStatsById(fastify.prisma, req.user as any, sessionId);
-            // Cache for 5 minutes
-            await setCache(fastify.redis, cacheKey, data, 300);
+        const pgClient = await fastify.pg.connect();
+        try {
+            const data = await StatsModel.getSessionStatsById(pgClient, sessionId, req.user as any);
+            res.status(200).send(data);
+        } catch (err: any) {
+            if (err instanceof NotFoundError) {
+                return res.status(404).send({ message: 'Session not found' });
+            }
+            throw err;
+        } finally {
+            pgClient.release();
         }
         res.status(200).send(data);
     });
