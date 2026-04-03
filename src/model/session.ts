@@ -715,9 +715,13 @@ export const SessionModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    issueQr: async (prisma: PrismaClient, id: string): Promise<SessionQrPayload> => {
+    issueQr: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, id: string): Promise<SessionQrPayload> => {
         try {
-            let session = await SessionModel.getById(prisma, id);
+            const results = await SessionModel.getAllFilteredSessions(prisma, user, { session_id: id, limit: 1 });
+            if (results.total === 0) {
+                throw new NotFoundError();
+            }
+            const session = results.items[0];
 
             if (session.status !== SESSION_STATUS.ACTIVE) {
                 throw new BadRequestError('QR codes can only be issued for active sessions');

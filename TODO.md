@@ -47,10 +47,10 @@ qr not tested
 
 ### Statistics
 
-#### GET /stats/overview
-#### GET /stats/sessions/{session_id}
-#### GET /stats/courses/{course_id}
-#### GET /stats/students/{student_id}
+#### GET /stats/overview✅
+#### GET /stats/sessions/{session_id}✅
+#### GET /stats/courses/{course_id}✅
+#### GET /stats/students/{student_id}✅
 
 ### Devices
 

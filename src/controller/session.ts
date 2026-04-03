@@ -247,10 +247,10 @@ async function sessionController(fastify: any) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
         const prisma = await fastify.prisma;
-        const qrPayload = await SessionModel.issueQr(prisma, req.params.id);
+        const qrPayload = await SessionModel.issueQr(prisma, req.user as any, req.params.id);
         res.status(200).send(qrPayload);
     });
 }
