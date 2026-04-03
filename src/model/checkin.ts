@@ -328,7 +328,18 @@ export const CheckinModel = {
             }
 
             if (session_id) where.session_id = session_id;
-            if (course_id) where.sessions = { ...where.sessions, course_id };
+            if (course_id) {
+                if (where.sessions && where.sessions.courses) {
+                    where.sessions = {
+                        AND: [
+                            { courses: where.sessions.courses },
+                            { course_id }
+                        ]
+                    };
+                } else {
+                    where.sessions = { ...where.sessions, course_id };
+                }
+            }
             if (student_id) where.student_id = student_id;
             if (status && status.length > 0) where.status = { in: status };
             if (min_risk_score !== undefined) where.risk_score = { ...where.risk_score, gte: min_risk_score };
@@ -356,7 +367,7 @@ export const CheckinModel = {
                         appeal_reason: true
                     },
                     orderBy: { checked_in_at: 'desc' },
-                    take: limit,
+                    ...(isFinite(limit) && { take: Math.max(1, Math.min(limit, 200)) }),
                     skip: offset
                 })
             ]);

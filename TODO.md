@@ -73,8 +73,8 @@ qr not tested
 
 ### Export
 
-#### GET /export/attendance/{course_id}
-#### GET /export/session/{session_id}
+#### GET /export/attendance/{course_id}✅
+#### GET /export/session/{session_id}✅
 
 ### POST /device/attest *(OPTIONAL - Not Tested)*
 
