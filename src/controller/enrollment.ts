@@ -44,7 +44,7 @@ function enrollmentController(fastify: FastifyInstance) {
                     }
                 }
             },
-            preHandler: [fastify.authorize(2), fastify.rateLimit()]
+            preHandler: [fastify.authorize(3), fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
             const prisma = fastify.prisma;

@@ -23,7 +23,7 @@ async function userController(fastify: FastifyInstance) {
                     }
                 }
             },
-            preHandler: [fastify.rateLimit()]
+            preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
         },
         async (req: FastifyRequest, res: FastifyReply) => {
             const prisma = fastify.prisma;

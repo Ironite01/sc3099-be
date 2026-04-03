@@ -342,19 +342,24 @@ async function checkinController(fastify: FastifyInstance) {
             ...req.query as any,
             status: [CHECKIN_STATUS.FLAGGED, CHECKIN_STATUS.APPEALED]
         });
-        res.status(200).send(result.items.map((i: any) => ({
-            id: i.id,
-            session_id: i.session_id,
-            session_name: i.session_name,
-            student_id: i.student_id,
-            student_name: i.student_name,
-            status: i.status,
-            checked_in_at: i.checked_in_at,
-            risk_score: i.risk_score,
-            risk_factors: i.risk_factors,
-            appeal_reason: i.appeal_reason,
-            appealed_at: i.appealed_at
-        })));
+        res.status(200).send({
+            items: result.items.map((i: any) => ({
+                id: i.id,
+                session_id: i.session_id,
+                session_name: i.session_name,
+                student_id: i.student_id,
+                student_name: i.student_name,
+                status: i.status,
+                checked_in_at: i.checked_in_at,
+                risk_score: i.risk_score,
+                risk_factors: i.risk_factors,
+                appeal_reason: i.appeal_reason,
+                appealed_at: i.appealed_at
+            })),
+            total: result.total,
+            limit: result.limit,
+            offset: result.offset
+        });
     });
 
     fastify.get(`${uri}/:checkin_id`, {

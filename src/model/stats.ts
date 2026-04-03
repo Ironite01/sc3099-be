@@ -207,6 +207,7 @@ export const StatsModel = {
                     scheduled_start: true,
                     status: true,
                     course_id: true,
+                    instructor_id: true,
                     courses: { select: { code: true, instructor_id: true } }
                 }
             });
@@ -216,8 +217,12 @@ export const StatsModel = {
             }
 
             // Authorization: Instructors can only see their own sessions
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR && session.courses?.instructor_id !== user.sub) {
-                throw new ForbiddenError();
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
+                const isSessionInstructor = session.instructor_id === user.sub;
+                const isCourseInstructor = session.courses?.instructor_id === user.sub;
+                if (!isSessionInstructor && !isCourseInstructor) {
+                    throw new ForbiddenError();
+                }
             }
 
             // Run all queries in parallel
@@ -311,8 +316,8 @@ export const StatsModel = {
                 throw new NotFoundError();
             }
 
-            // Authorization: Instructors can only see their own courses
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR && course.instructor_id !== user.sub) {
+            // Authorization: Only restrict if course has an assigned instructor that's not the requester
+            if (user.role === USER_ROLE_TYPES.INSTRUCTOR && course.instructor_id && course.instructor_id !== user.sub) {
                 throw new ForbiddenError();
             }
 
@@ -435,43 +440,20 @@ export const StatsModel = {
                 throw new NotFoundError();
             }
 
-            // Students can only see their own stats, instructors can see any student in their courses
+            // Students can only see their own stats
             if (user.role === USER_ROLE_TYPES.STUDENT && user.sub !== studentId) {
                 throw new ForbiddenError();
             }
 
-            // Fetch enrollments and instructor auth check in parallel
+            // Fetch enrollments
             let enrollments: Array<{ course_id: string; courses: { code: string } | null }>;
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                const [enrollment, enrollmentList] = await Promise.all([
-                    prisma.enrollments.findFirst({
-                        where: {
-                            student_id: studentId,
-                            courses: { instructor_id: user.sub },
-                            is_active: true
-                        }
-                    }),
-                    prisma.enrollments.findMany({
-                        where: { student_id: studentId, is_active: true },
-                        select: {
-                            course_id: true,
-                            courses: { select: { code: true } }
-                        }
-                    })
-                ]);
-                if (!enrollment) {
-                    throw new ForbiddenError();
+            enrollments = await prisma.enrollments.findMany({
+                where: { student_id: studentId, is_active: true },
+                select: {
+                    course_id: true,
+                    courses: { select: { code: true } }
                 }
-                enrollments = enrollmentList;
-            } else {
-                enrollments = await prisma.enrollments.findMany({
-                    where: { student_id: studentId, is_active: true },
-                    select: {
-                        course_id: true,
-                        courses: { select: { code: true } }
-                    }
-                });
-            }
+            });
 
             const courses = await Promise.all(
                 enrollments.map(async (e: { course_id: string; courses: { code: string } | null }) => {

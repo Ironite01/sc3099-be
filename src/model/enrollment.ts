@@ -58,7 +58,8 @@ export const EnrollmentModel = {
                 course_name: e.courses?.name,
                 semester: e.courses?.semester,
                 instructor_name: e.courses?.users?.full_name ?? 'Unassigned',
-                enrolled_at: e.enrolled_at
+                enrolled_at: e.enrolled_at,
+                is_active: e.is_active
             }));
 
             delete data.courses;
@@ -80,7 +81,8 @@ export const EnrollmentModel = {
             } catch (err) {
                 throw new NotFoundError('Course not found');
             }
-            if (actor.role === USER_ROLE_TYPES.INSTRUCTOR && course.instructor_id !== actor.id) {
+            // Only restrict if course has an assigned instructor that's not the requester
+            if (actor.role === USER_ROLE_TYPES.INSTRUCTOR && course.instructor_id && course.instructor_id !== actor.id) {
                 throw new NotFoundError();
             }
 
