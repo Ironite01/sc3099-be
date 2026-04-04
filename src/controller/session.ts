@@ -133,6 +133,7 @@ async function sessionController(fastify: any) {
             }
         }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
+        console.log(req.body);
         // In this endpoint, we also allow TA since there is a relation with them and sessions.
         const prisma = fastify.prisma;
         const user = req.user as any;

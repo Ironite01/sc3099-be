@@ -430,7 +430,7 @@ export const SessionModel = {
             let checkin_opens_at = payload?.checkin_opens_at ? new Date(payload.checkin_opens_at) : null;
             let checkin_closes_at = payload?.checkin_closes_at ? new Date(payload.checkin_closes_at) : null;
 
-            if (!course_id || !name || !scheduled_start || !scheduled_end || !instructor_id) {
+            if (!course_id || !name || !scheduled_start || !scheduled_end) {
                 throw new BadRequestError('Missing required session fields');
             }
 
