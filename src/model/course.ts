@@ -62,7 +62,6 @@ export const CourseModel = {
                 }), total
             };
         } catch (err: any) {
-            console.log(err)
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
