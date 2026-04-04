@@ -112,7 +112,7 @@ export const SessionModel = {
     },
     getAllFilteredSessions: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, filters: any): Promise<{ items: any[], total: number }> => {
         try {
-            const { status, course_id, instructor_id, start_date, end_date, limit = 50, offset = 0 } = filters;
+            const { session_id, status, course_id, instructor_id, start_date, end_date, limit = 50, offset = 0 } = filters;
             const userId = user.sub;
             const role = user.role;
 
@@ -147,6 +147,7 @@ export const SessionModel = {
 
             if (course_id) where.course_id = course_id;
             if (instructor_id && role === USER_ROLE_TYPES.ADMIN) where.instructor_id = instructor_id;
+            if (session_id) where.id = session_id;
 
             const [sessions, total] = await prisma.$transaction([
                 prisma.sessions.findMany({
@@ -161,6 +162,7 @@ export const SessionModel = {
                         scheduled_end: true,
                         checkin_opens_at: true,
                         checkin_closes_at: true,
+                        qr_code_enabled: true,
                         courses: {
                             select: {
                                 _count: {
@@ -306,7 +308,6 @@ export const SessionModel = {
                 }
             })
         } catch (err: any) {
-            console.log('Error in getFilteredSessionsByUser:', err);
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
