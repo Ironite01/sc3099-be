@@ -31,6 +31,7 @@ async function sessionController(fastify: any) {
         const prisma = fastify.prisma;
         const { limit = 50, offset = 0 } = (req.query) as any;
         const { items, total } = await SessionModel.getAllFilteredSessions(prisma, req.user as any, req.query as any);
+        console.log(items);
         res.status(200).send({ items, total, limit, offset });
     });
 

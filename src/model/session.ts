@@ -158,6 +158,9 @@ export const SessionModel = {
                         name: true,
                         status: true,
                         scheduled_start: true,
+                        scheduled_end: true,
+                        checkin_opens_at: true,
+                        checkin_closes_at: true,
                         courses: {
                             select: {
                                 _count: {
@@ -166,7 +169,9 @@ export const SessionModel = {
                                             where: { is_active: true }
                                         }
                                     }
-                                }
+                                },
+                                code: true,
+                                name: true
                             }
                         },
                         users: {
@@ -208,7 +213,6 @@ export const SessionModel = {
 
             return { items, total };
         } catch (err: any) {
-            console.error('Error in getAllFilteredSessions:', err);
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
