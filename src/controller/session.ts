@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { SessionModel, SESSION_STATUS } from '../model/session.js';
+import { SessionModel, SESSION_STATUS, SESSION_TYPE } from '../model/session.js';
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { BASE_URL } from '../helpers/constants.js';
@@ -16,7 +16,7 @@ async function sessionController(fastify: any) {
             querystring: {
                 type: 'object',
                 properties: {
-                    status: { type: 'string', enum: ['scheduled', 'active', 'closed', 'cancelled'] },
+                    status: { type: 'string', enum: Object.values(SESSION_STATUS) },
                     course_id: { type: 'string' },
                     instructor_id: { type: 'string' },
                     start_date: { type: 'string', format: 'date-time' },
@@ -115,7 +115,7 @@ async function sessionController(fastify: any) {
                     course_id: { type: 'string' },
                     instructor_id: { type: 'string' },
                     name: { type: 'string' },
-                    session_type: { type: 'string', enum: ['lecture', 'tutorial', 'lab', 'exam'], default: 'lecture' },
+                    session_type: { type: 'string', enum: Object.values(SESSION_TYPE), default: 'lecture' },
                     description: { type: 'string' },
                     scheduled_start: { type: 'string', format: 'date-time' },
                     scheduled_end: { type: 'string', format: 'date-time' },
