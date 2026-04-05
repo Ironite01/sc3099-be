@@ -414,7 +414,7 @@ export const UserModel = {
                 where: { id: userId },
                 data: {
                     is_active: false,
-                    scheduled_deletion_at: new Date(),
+                    scheduled_deletion_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
                     updated_at: new Date()
                 },
                 select: {

@@ -325,7 +325,8 @@ export const CheckinModel = {
                             face_match_passed: matchPassed,
                             face_match_score: matchScore,
                             face_embedding_hash: faceEmbeddingHash,
-                            qr_code_verified: requireQr
+                            qr_code_verified: requireQr,
+                            scheduled_deletion_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
                         },
                         select: {
                             id: true,
