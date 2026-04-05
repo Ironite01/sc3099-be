@@ -13,6 +13,7 @@ import rateLimiter from './services/rateLimiter.js';
 import { MlServices } from './services/ml/index.js';
 import metricsPlugin from './services/metrics.js';
 import prismaPlugin from './services/prisma.js';
+import dataRetentionCron from './services/dataRetentionCron.js';
 
 const server = fastify({
     ignoreTrailingSlash: true,
@@ -39,8 +40,9 @@ try {
         .register(fastifyFormbody)
         .register(cors)
         .register(errorHandler)
-        .register(controller)
-        .register(metricsPlugin);
+        .register(metricsPlugin)
+        .register(dataRetentionCron) // Data retention cleanup cron job (runs daily at 2 AM UTC)
+        .register(controller);
 
     const address = await server.listen({ port: server.config.PORT!!, host: server.config.HOST!! });
     console.log(`Server listening at ${address}`);

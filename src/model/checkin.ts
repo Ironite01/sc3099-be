@@ -208,6 +208,13 @@ export const CheckinModel = {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
 
+                if ((requireLiveness || requireFaceMatch) && !user.camera_consent) {
+                    throw new BadRequestError('Camera consent is required for biometric verification. Please update your consent settings.');
+                }
+                if (latitude && longitude && !user.geolocation_consent) {
+                    throw new BadRequestError('Geolocation consent is required for check-in. Please update your consent settings.');
+                }
+
                 if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
                     throw new BadRequestError('Liveness challenge response must be a valid base64 string');
                 }

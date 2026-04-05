@@ -71,8 +71,8 @@ async function checkinController(fastify: FastifyInstance) {
                 type: 'object',
                 properties: {
                     session_id: { type: 'string', format: 'uuid' },
-                    latitude: { type: 'number' },
-                    longitude: { type: 'number' },
+                    latitude: { type: 'number', minimum: -90, maximum: 90 },
+                    longitude: { type: 'number', minimum: -180, maximum: 180 },
                     location_accuracy_meters: { type: 'number' },
                     device_fingerprint: { type: 'string' },
                     liveness_challenge_response: { type: 'string' },
