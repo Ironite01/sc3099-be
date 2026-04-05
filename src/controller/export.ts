@@ -75,17 +75,11 @@ async function exportController(fastify: FastifyInstance) {
             }
 
             const rows = allCheckins.map(r => ({
-                student_id: r.student_id,
-                student_name: r.student_name,
-                student_email: r.student_email,
-                session_date: r.session_date,
-                session_name: r.session_name,
-                status: r.status,
-                checked_in_at: r.checked_in_at,
-                risk_score: r.risk_score,
-                distance_from_venue_meters: r.distance_from_venue_meters,
-                liveness_passed: r.liveness_passed,
-                face_match_passed: r.face_match_passed
+                "Student Name": r.student_name,
+                "Email": r.student_email,
+                "Session Name": r.session_name,
+                "Session Date": r.session_date,
+                "Status": r.status
             }));
 
             const safeCode = allCheckins[0]!.course_code.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -172,17 +166,11 @@ async function exportController(fastify: FastifyInstance) {
             }
 
             const rows = allCheckins.map(r => ({
-                student_id: r.student_id,
-                student_name: r.student_name,
-                student_email: r.student_email,
-                session_date: r.session_date,
-                session_name: r.session_name,
-                status: r.status,
-                checked_in_at: r.checked_in_at,
-                risk_score: r.risk_score,
-                distance_from_venue_meters: r.distance_from_venue_meters,
-                liveness_passed: r.liveness_passed,
-                face_match_passed: r.face_match_passed
+                "Student Name": r.student_name,
+                "Email": r.student_email,
+                "Session Name": r.session_name,
+                "Session Date": r.session_date,
+                "Status": r.status
             }));
 
             const safeCode = allCheckins[0]!.course_code.replace(/[^a-zA-Z0-9_-]/g, '_');
