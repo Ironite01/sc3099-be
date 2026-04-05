@@ -6,6 +6,7 @@ import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
 import { randomUUID } from 'node:crypto';
+import { checkinTotal, riskScoreHistogram, checkinDistanceHistogram } from '../services/metrics.js';
 
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
@@ -187,6 +188,10 @@ async function checkinController(fastify: FastifyInstance) {
                 success: true,
                 details
             });
+
+            checkinTotal.inc({ status: checkin.status });
+            riskScoreHistogram.observe(checkin.risk_score);
+            checkinDistanceHistogram.observe(checkin.distance_from_venue_meters);
 
 
             res.status(201).send({

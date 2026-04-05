@@ -61,6 +61,7 @@ function validation(fastify: FastifyInstance) {
             ? (error.message || statusDefaultMessage[String(statusCode) as keyof typeof statusDefaultMessage])
             : statusDefaultMessage["500"];
         request.log.error(error);
+        console.log(error);
         reply.status(statusCode).send({
             statusCode,
             error: statusDefaultMessage[String(statusCode) as keyof typeof statusDefaultMessage] || 'Error',

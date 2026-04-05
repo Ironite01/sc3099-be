@@ -4,7 +4,7 @@ import { BASE_URL } from "../helpers/constants.js";
 import { DeviceModel, PLATFORM_TYPES } from "../model/device.js";
 import { AUDIT_ACTIONS, AuditModel } from "../model/audit.js";
 import { USER_ROLE_TYPES } from "../model/user.js";
-// import { deviceRegistrationTotal } from '../services/metrics.js';
+import { deviceRegistrationTotal } from '../services/metrics.js';
 
 async function deviceController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/devices`;
@@ -121,6 +121,9 @@ async function deviceController(fastify: FastifyInstance) {
                 is_rooted: device.is_rooted_jailbroken
             }
         });
+
+        deviceRegistrationTotal.inc();
+
         res.status(201).send({
             id: device.id,
             device_fingerprint: device.device_fingerprint,

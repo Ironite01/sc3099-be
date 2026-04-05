@@ -48,6 +48,10 @@ function auth(fastify: FastifyInstance) {
             const userRole = (request.user as { role: USER_ROLE_TYPES })?.role;
             const userId = (request.user as any)?.sub;
 
+            if (userRole === USER_ROLE_TYPES.ADMIN) {
+                return;
+            }
+
             if (typeof arg === 'number') {
                 const userRoleLevel = USER_ROLE_HIERARCHY[userRole] || 0;
 
