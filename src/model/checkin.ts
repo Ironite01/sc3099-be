@@ -15,6 +15,7 @@ import { parseQrPayload, secureEqualsHex, signQrPayload } from '../helpers/qr.js
 import getRiskLevel from '../helpers/getRiskLevels.js';
 import { buildRiskSignals, getSignalSeverity, normalizeRiskFactors, RiskSignalModel, type RiskSignal } from './riskSignals.js';
 import { CourseModel } from './course.js';
+import { detectGeoSpoofing, getGeoSpoofingRiskFactors } from '../helpers/geoSpoofingDetection.js';
 
 export enum CHECKIN_STATUS {
     PENDING = 'pending',
@@ -267,7 +268,55 @@ export const CheckinModel = {
                     matchScore = faceResult.match_score;
                 }
 
-                // 7. Risk assessment
+                // 7. GPS Spoofing Detection
+                // Query student's previous check-in to detect impossible travel and accuracy anomalies
+                let previousCheckInLat: number | null = null;
+                let previousCheckInLng: number | null = null;
+                let previousCheckInAccuracyM: number | null = null;
+                let previousCheckInTimeMs: number | null = null;
+
+                try {
+                    const previousCheckin = await tx.checkins.findFirst({
+                        where: {
+                            student_id: studentId,
+                            checked_in_at: {
+                                lt: now // Only get check-ins before current time
+                            }
+                        },
+                        orderBy: {
+                            checked_in_at: 'desc' // Most recent first
+                        },
+                        select: {
+                            latitude: true,
+                            longitude: true,
+                            location_accuracy_meters: true,
+                            checked_in_at: true
+                        }
+                    });
+
+                    if (previousCheckin && previousCheckin.latitude && previousCheckin.longitude) {
+                        previousCheckInLat = previousCheckin.latitude;
+                        previousCheckInLng = previousCheckin.longitude;
+                        previousCheckInAccuracyM = previousCheckin.location_accuracy_meters || undefined || null;
+                        previousCheckInTimeMs = previousCheckin.checked_in_at.getTime();
+                    }
+                } catch (err) {
+                    // Silently continue if unable to get previous check-in
+                    // Don't fail the entire check-in process
+                }
+
+                // Detect GPS spoofing patterns
+                const spoofingResult = detectGeoSpoofing(
+                    latitude,
+                    longitude,
+                    location_accuracy_meters,
+                    previousCheckInLat,
+                    previousCheckInLng,
+                    previousCheckInAccuracyM,
+                    previousCheckInTimeMs
+                );
+
+                // 8. Risk assessment
                 const riskFactors: { type: string; weight: number; severity: RiskSignal['severity']; confidence: number }[] = [];
                 const {
                     risk_score, pass_threshold, signal_breakdown, recommendations
@@ -291,6 +340,17 @@ export const CheckinModel = {
                         type: key,
                         weight,
                         severity: getSignalSeverity(weight),
+                        confidence: 1
+                    });
+                }
+
+                // Add GPS spoofing risk factors
+                const geoSpoofingFactors = getGeoSpoofingRiskFactors(spoofingResult);
+                for (const factor of geoSpoofingFactors) {
+                    riskFactors.push({
+                        type: factor.type,
+                        weight: factor.weight,
+                        severity: getSignalSeverity(factor.weight),
                         confidence: 1
                     });
                 }
@@ -344,7 +404,7 @@ export const CheckinModel = {
                         }
                     });
 
-                    // 8. Update relevant records after check in
+                    // 9. Update relevant records after check in
                     const persistedRiskSignals = await RiskSignalModel.insertRiskSignals(tx as any, checkin.id, riskSignals);
 
                     await DeviceModel.updateAfterCheckin(tx as any, device.id, getRiskLevel(risk_score) as TRUST_SCORE_TYPES);

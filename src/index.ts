@@ -33,7 +33,7 @@ try {
             limits: { fileSize: 50 * 1024 * 1024 }
         })
         .register(fastifyCookie)
-        .register(redis) // TODO: Use caching
+        .register(redis)
         .register(rateLimiter)
         .register(prismaPlugin)
         .register(auth)
@@ -41,7 +41,7 @@ try {
         .register(cors)
         .register(errorHandler)
         .register(metricsPlugin)
-        .register(dataRetentionCron) // Data retention cleanup cron job (runs daily at 2 AM UTC)
+        .register(dataRetentionCron)
         .register(controller);
 
     const address = await server.listen({ port: server.config.PORT!!, host: server.config.HOST!! });
