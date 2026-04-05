@@ -421,11 +421,27 @@ export const EnrollmentModel = {
                 throw new NotFoundError();
             }
 
-            const where = { id: enrollmentId } as any;
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                where.courses = {
-                    instructor_id: user.id
-                };
+            let result;
+            if (user.role === USER_ROLE_TYPES.ADMIN) {
+                result = await pgClient.query(
+                    `UPDATE enrollments
+                     SET is_active = false, dropped_at = NOW()
+                     WHERE id = $1 AND is_active = TRUE
+                     RETURNING student_id, course_id`,
+                    [enrollmentId]
+                );
+            } else {
+                result = await pgClient.query(
+                    `UPDATE enrollments e
+                     SET is_active = false, dropped_at = NOW()
+                     FROM courses c
+                     WHERE e.id = $1
+                       AND e.course_id = c.id
+                       AND e.is_active = TRUE
+                       AND c.instructor_id = $2
+                     RETURNING e.student_id, e.course_id`,
+                    [enrollmentId, user.id]
+                );
             }
             const result = await prisma.enrollments.update({
                 where,

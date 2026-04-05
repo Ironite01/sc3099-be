@@ -131,7 +131,23 @@ export const UserModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    getEnrolledUserByInstructorId: async function getEnrolledUserByInstructorId(prisma: PrismaClient, instructorId: string, studentId: string) {
+    getByIdAllowInactive: async function getByIdAllowInactive(pgClient: any, id: string) {
+        try {
+            const { rows } = await pgClient.query(
+                'SELECT id, email, full_name, role, is_active, created_at, last_login_at, camera_consent, geolocation_consent, face_enrolled, face_embedding_hash FROM users WHERE id = $1',
+                [id]
+            );
+            if (rows.length === 0) {
+                throw new NotFoundError();
+            }
+
+            return rows[0] as User;
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    getEnrolledUserByInstructorId: async function getEnrolledUserByInstructorId(pgClient: any, instructorId: string, studentId: string) {
         try {
             return await prisma.users.findFirstOrThrow({
                 where: {
