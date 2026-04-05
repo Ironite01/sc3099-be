@@ -13,7 +13,7 @@ declare module 'fastify' {
 }
 
 function auth(fastify: FastifyInstance) {
-    const secret = fastify.config.JWT_SECRET!!;
+    const secret = fastify.config.SECRET_KEY!!;
 
     fastify.register(fastifyJwt, {
         secret: secret,

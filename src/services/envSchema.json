@@ -2,18 +2,12 @@
     "type": "object",
     "required": [
         "PORT",
-        "FE_PORT",
-        "ML_PORT",
-        "ML_HOST",
-        "DASHBOARD_PORT",
-        "POSTGRES_USERNAME",
-        "POSTGRES_PASSWORD",
-        "POSTGRES_URI",
-        "POSTGRES_DB",
-        "JWT_SECRET",
-        "REDIS_HOST",
-        "REDIS_PORT",
-        "REDIS_LIMIT_HIGH"
+        "FRONTEND_URL",
+        "ML_URL",
+        "DASHBOARD_URL",
+        "DATABASE_URL",
+        "SECRET_KEY",
+        "REDIS_URL"
     ],
     "properties": {
         "REDIS_LIMIT_HIGH": {
@@ -24,45 +18,45 @@
             "type": "string",
             "default": 8000
         },
-        "FE_PORT": {
+        "FRONTEND_URL": {
             "type": "string",
-            "default": 3000
+            "default": "http://localhost:3000"
         },
-        "ML_PORT": {
+        "ML_URL": {
             "type": "string",
-            "default": 8001
+            "default": "http://localhost:8001"
         },
-        "DASHBOARD_PORT": {
+        "DASHBOARD_URL": {
             "type": "string",
-            "default": 8501
+            "default": "http://localhost:8501"
         },
-        "POSTGRES_USERNAME": {
+        "DATABASE_URL": {
             "type": "string",
-            "default": "postgres"
+            "default": "postgres://postgres:password@127.0.0.1/capstone"
         },
-        "POSTGRES_PASSWORD": {
-            "type": "string",
-            "default": "postgres"
-        },
-        "POSTGRES_URI": {
-            "type": "string",
-            "default": "localhost"
-        },
-        "POSTGRES_DB": {
-            "type": "string",
-            "default": "capstone"
-        },
-        "JWT_SECRET": {
+        "SECRET_KEY": {
             "type": "string",
             "default": "your-secret-key-change-this-in-production"
         },
-        "REDIS_HOST": {
+        "REDIS_URL": {
             "type": "string",
-            "default": "localhost"
+            "default": "redis://localhost:6379"
         },
-        "REDIS_PORT": {
+        "ACCESS_TOKEN_EXPIRE_MINUTES": {
             "type": "string",
-            "default": 6379
+            "default": 60
+        },
+        "REFRESH_TOKEN_EXPIRE_DAYS": {
+            "type": "string",
+            "default": 7
+        },
+        "BCRYPT_ROUNDS": {
+            "type": "string",
+            "default": 10
+        },
+        "RISK_SCORE_THRESHOLD": {
+            "type": "string",
+            "default": 0.5
         }
     }
 }

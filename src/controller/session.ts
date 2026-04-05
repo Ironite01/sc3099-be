@@ -139,7 +139,10 @@ async function sessionController(fastify: any) {
         if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
             (req.body as any).instructor_id = user.sub;
         }
-        const session = await SessionModel.create(prisma, req.body as any);
+        const session = await SessionModel.create(prisma, {
+            ...req.body as any,
+            risk_threshold: (req.body as any).risk_threshold || fastify.config.RISK_SCORE_THRESHOLD || undefined
+        });
 
         await AuditModel.log(prisma, {
             userId: user.sub,

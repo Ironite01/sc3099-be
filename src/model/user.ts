@@ -3,7 +3,6 @@ import * as bcrypt from 'bcrypt';
 import type { PrismaClient, users as User } from '../generated/prisma/client.js';
 import { isBase64 } from '../helpers/regex.js';
 import { BadRequestError, AppError, ForbiddenError, NotFoundError, UnauthorizedError, UnavailableError } from './error.js';
-import { SALT_ROUNDS } from '../helpers/constants.js';
 import { MlServices } from '../services/ml/index.js';
 import generateRandomPassword from '../helpers/generateRandomPassword.js';
 import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
@@ -20,6 +19,8 @@ export const USER_ROLE_HIERARCHY: Record<USER_ROLE_TYPES, number> = {
     [USER_ROLE_TYPES.INSTRUCTOR]: 3,
     [USER_ROLE_TYPES.ADMIN]: 4
 };
+
+const SALT_ROUNDS = parseInt(process.env.SALT_ROUNDS!! || '10');
 
 export const UserModel = {
     getUsersByEmail: async (prisma: PrismaClient, emails: string[]) => {

@@ -9,17 +9,10 @@ declare module 'fastify' {
     }
 }
 
-interface POSTGRES_CONFIG {
-    POSTGRES_USERNAME: string,
-    POSTGRES_PASSWORD: string,
-    POSTGRES_URI: string,
-    POSTGRES_DB: string
-}
-
 const prismaPlugin: FastifyPluginAsync = fp(async (server, options) => {
-    const { POSTGRES_USERNAME, POSTGRES_URI, POSTGRES_DB, POSTGRES_PASSWORD }: POSTGRES_CONFIG = server.config;
+    const { DATABASE_URL } = server.config;
     const prisma = new PrismaClient({
-        adapter: new PrismaPg({ connectionString: `postgres://${POSTGRES_USERNAME}:${POSTGRES_PASSWORD}@${POSTGRES_URI}/${POSTGRES_DB}` })
+        adapter: new PrismaPg({ connectionString: DATABASE_URL })
     })
 
     await prisma.$connect()

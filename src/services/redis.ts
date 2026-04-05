@@ -10,7 +10,7 @@ declare module 'fastify' {
 
 async function redis(fastify: FastifyInstance) {
     const client = createClient({
-        url: `redis://${fastify.config.REDIS_HOST!!}:${fastify.config.REDIS_PORT!!}`
+        url: fastify.config.REDIS_URL,
     });
 
     client.on('error', (err) => {

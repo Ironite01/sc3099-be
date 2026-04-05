@@ -3,18 +3,16 @@ HOST=localhost
 PORT=8000
 FRONTEND_URL=http://localhost:3000
 DASHBOARD_URL=http://localhost:8501
-ML_PORT=8001
-ML_HOST=localhost
+ML_URL=http://localhost:8001
 
 NODE_ENV=development
 
-POSTGRES_USERNAME=postgres
-POSTGRES_PASSWORD=password
-POSTGRES_URI=127.0.0.1
-POSTGRES_DB=capstone
+DATABASE_URL=postgres://postgres:password@127.0.0.1/capstone
 
-JWT_SECRET=somesecret
+REDIS_URL=redis://localhost:6379
+REDIS_LIMIT_HIGH=true
 
+SECRET_KEY=somesecret
 
 ###
 To setup prisma

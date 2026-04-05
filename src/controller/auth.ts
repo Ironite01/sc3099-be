@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { USER_ROLE_TYPES, UserModel } from '../model/user.js';
-import { ACCESS_TOKEN_TTL, BASE_URL, REFRESH_TOKEN_TTL } from '../helpers/constants.js';
+import { BASE_URL } from '../helpers/constants.js';
 import { UnauthorizedError } from '../model/error.js';
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { loginTotal, registrationTotal } from '../services/metrics.js';
@@ -9,6 +9,9 @@ import { loginTotal, registrationTotal } from '../services/metrics.js';
 async function authController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/auth`;
     const resourceType = 'auth';
+
+    const ACCESS_TOKEN_TTL = parseInt(fastify.config.ACCESS_TOKEN_EXPIRE_MINUTES || '60') * 60;
+    const REFRESH_TOKEN_TTL = parseInt(fastify.config.REFRESH_TOKEN_EXPIRE_DAYS || '7') * 24 * 60 * 60;
 
     fastify.post(`${uri}/register`, {
         schema: {
