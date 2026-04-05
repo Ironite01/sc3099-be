@@ -511,6 +511,7 @@ export const CheckinModel = {
                     c.name AS course_name,
                     ci.status,
                     TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                    ci.appealed_at,
                     ci.risk_score
              FROM checkins ci
              JOIN sessions s ON s.id = ci.session_id
