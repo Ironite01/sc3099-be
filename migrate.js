@@ -18,7 +18,8 @@ async function run() {
         await client.query('CREATE INDEX IF NOT EXISTS idx_courses_instructor_id ON courses(instructor_id);');
         await client.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS instructor_id TEXT REFERENCES users(id) ON DELETE SET NULL;');
         await client.query('CREATE INDEX IF NOT EXISTS idx_sessions_instructor_id ON sessions(instructor_id);');
-        console.log("Migration successful: added instructor_id to courses and sessions");
+        await client.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS qr_code_enabled BOOLEAN NOT NULL DEFAULT FALSE;');
+        console.log("Migration successful: added instructor_id/qr_code_enabled to courses and sessions");
     }
     catch (e) {
         console.error("Migration failed", e);

@@ -406,7 +406,7 @@ export const EnrollmentModel = {
                     `UPDATE enrollments
                      SET is_active = false, dropped_at = NOW()
                      WHERE id = $1 AND is_active = TRUE
-                     RETURNING id`,
+                     RETURNING student_id, course_id`,
                     [enrollmentId]
                 );
             } else {
