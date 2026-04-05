@@ -584,17 +584,29 @@ export const CheckinModel = {
                 take: Math.max(1, Math.min(limit, 200))
             });
 
-            const data: any = checkins.map(c => ({
-                id: c.id,
-                session_id: c.session_id,
-                session_name: c.sessions?.name,
-                course_id: c.sessions?.course_id,
-                course_code: c.sessions?.courses?.code,
-                course_name: c.sessions?.courses?.name,
-                status: c.status,
-                checked_in_at: c.checked_in_at,
-                risk_score: c.risk_score
-            }));
+            params.push(Math.max(1, Math.min(limit, 200)));
+
+            const { rows } = await pgClient.query(
+                `SELECT ci.id,
+                    ci.session_id,
+                    s.name AS session_name,
+                    s.course_id as course_id,
+                    c.code AS course_code,
+                    c.name AS course_name,
+                    ci.status,
+                    TO_CHAR(ci.checked_in_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD"T"HH24:MI:SS"+08:00"') AS checked_in_at,
+                    ci.appealed_at,
+                    ci.risk_score
+             FROM checkins ci
+             JOIN sessions s ON s.id = ci.session_id
+             JOIN courses c ON c.id = s.course_id
+             ${where}
+             ORDER BY ci.checked_in_at DESC
+             LIMIT $${params.length}`,
+                params
+            );
+
+            return rows as (Partial<Checkin> & { session_name: string; course_id: string; course_code: string; course_name: string })[];
 
             delete data.sessions;
             return data;
