@@ -1,12 +1,9 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import cron from 'cron';
-
+import { CronJob } from 'cron';
 
 async function dataRetentionCronPlugin(fastify: FastifyInstance) {
-    const CronJob = (await cron).CronJob;
-
     async function performDataRetention() {
         const now = new Date();
         const prisma = fastify.prisma;
