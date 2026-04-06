@@ -26,7 +26,7 @@ async function sessionController(fastify: any) {
                 },
                 additionalProperties: false
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.TA, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const { limit = 50, offset = 0 } = (req.query) as any;
@@ -135,7 +135,7 @@ async function sessionController(fastify: any) {
                     qr_code_enabled: { type: 'boolean', default: false }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
@@ -220,7 +220,7 @@ async function sessionController(fastify: any) {
                     qr_code_enabled: { type: 'boolean' }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const user = req.user as any;
@@ -250,7 +250,7 @@ async function sessionController(fastify: any) {
                 required: ['session_id'],
                 properties: { session_id: { type: 'string' } }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const user = req.user as any;

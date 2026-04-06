@@ -47,12 +47,12 @@ async function statsController(fastify: FastifyInstance) {
                 properties: { sessionId: { type: 'string' } }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.TA, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { sessionId } = req.params as { sessionId: string };
         const pgClient = await fastify.pg.connect();
         try {
-            const data = await StatsModel.getSessionStatsById(pgClient, sessionId, req.user as any);
+            const data = await StatsModel.getSessionStatsById(pgClient, sessionId);
             res.status(200).send(data);
         } catch (err: any) {
             if (err instanceof NotFoundError) {
