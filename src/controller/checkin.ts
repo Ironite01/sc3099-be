@@ -6,7 +6,8 @@ import { USER_ROLE_TYPES } from '../model/user.js';
 import { CHECKIN_STATUS, CheckinModel } from '../model/checkin.js';
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
-import { checkinTotal } from '../services/metrics.js';
+import { randomUUID } from 'node:crypto';
+import { checkinTotal, riskScoreHistogram, checkinDistanceHistogram } from '../services/metrics.js';
 
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
@@ -206,14 +207,7 @@ async function checkinController(fastify: FastifyInstance) {
 
         const prisma = fastify.prisma;
         try {
-            const checkin = await CheckinModel.create(fastify.pg.transact, userId, userAgent ? { ...u, userAgent } : u);
-            if (
-                checkin.status === CHECKIN_STATUS.APPROVED
-                || checkin.status === CHECKIN_STATUS.FLAGGED
-                || checkin.status === CHECKIN_STATUS.REJECTED
-            ) {
-                checkinTotal.inc({ status: checkin.status });
-            }
+            const checkin = await CheckinModel.create(prisma, userId, userAgent ? { ...u, userAgent } : u);
 
             let auditAction = AUDIT_ACTIONS.CHECKIN_ATTEMPTED;
             let details = {};
