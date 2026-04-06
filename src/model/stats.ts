@@ -1,5 +1,5 @@
-import type { PoolClient } from 'pg';
-import { AppError, BadRequestError, NotFoundError } from './error.js';
+import type { PrismaClient } from '../generated/prisma/client.js';
+import { AppError, BadRequestError, ForbiddenError, NotFoundError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 
 export const StatsModel = {
@@ -197,22 +197,22 @@ export const StatsModel = {
         }
     },
 
-    getSessionStatsById: async function (pgClient: PoolClient, sessionId: string, user: { sub: string; role: USER_ROLE_TYPES }) {
+    getSessionStatsById: async function (prisma: PrismaClient, user: { sub: string; role: USER_ROLE_TYPES }, sessionId: string) {
         try {
-            const roleFilter = user.role === USER_ROLE_TYPES.ADMIN
-                ? ''
-                : user.role === USER_ROLE_TYPES.INSTRUCTOR
-                    ? ' AND s.instructor_id = $2'
-                    : ' AND EXISTS (SELECT 1 FROM course_tas ct WHERE ct.course_id = s.course_id AND ct.ta_id = $2)';
-            const roleParams = user.role === USER_ROLE_TYPES.ADMIN ? [sessionId] : [sessionId, user.sub];
+            const session = await prisma.sessions.findUnique({
+                where: { id: sessionId },
+                select: {
+                    id: true,
+                    name: true,
+                    scheduled_start: true,
+                    status: true,
+                    course_id: true,
+                    instructor_id: true,
+                    courses: { select: { code: true, instructor_id: true } }
+                }
+            });
 
-            const sessionRow = await pgClient.query(
-                `SELECT s.*, c.code AS course_code FROM sessions s
-                 JOIN courses c ON c.id = s.course_id
-                 WHERE s.id = $1${roleFilter}`,
-                roleParams
-            );
-            if (!sessionRow.rows.length) {
+            if (!session) {
                 throw new NotFoundError();
             }
 
