@@ -40,8 +40,9 @@ try {
         .register(fastifyFormbody)
         .register(cors)
         .register(errorHandler)
-        .register(controller)
-        .register(metricsPlugin);
+        .register(metricsPlugin)
+        .register(dataRetentionCron)
+        .register(controller);
 
     const address = await server.listen({ port: server.config.PORT!!, host: server.config.HOST!! });
     console.log(`Server listening at ${address}`);

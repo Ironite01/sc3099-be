@@ -76,7 +76,7 @@ export const CheckinModel = {
                 session_id,
                 latitude,
                 longitude,
-                location_accuracy_meters = 50,
+                location_accuracy_meters,
                 device_fingerprint,
                 liveness_challenge_response = null,
                 face_verification_image = null,
@@ -86,28 +86,21 @@ export const CheckinModel = {
                 userAgent
             } = payload;
             return await transact(async (pgClient) => {
-                // 1. Validate device (auto-register for first-time fingerprint)
+                // 1. Validate device
                 let device;
                 try {
-                    device = await DeviceModel.getByFingerprint(pgClient, studentId, device_fingerprint);
+                    device = await DeviceModel.getByFingerprintAndUserId(tx as any, studentId, device_fingerprint);
                 } catch (err: any) {
                     if (err instanceof NotFoundError) {
-                        device = await DeviceModel.register(
-                            async (fn) => fn(pgClient),
-                            studentId,
-                            {
-                                device_fingerprint,
-                                platform: 'web',
-                                browser: 'unknown',
-                                public_key: `legacy:${device_fingerprint}`
-                            }
-                        );
+                        device = await DeviceModel.register(tx as any, studentId, {
+                            device_fingerprint,
+                            platform: 'web',
+                            browser: 'unknown',
+                            public_key: `legacy:${device_fingerprint}`
+                        });
                     } else {
                         throw err;
                     }
-                }
-                if (!device || !device.is_active || device.revoked_at) {
-                    throw new BadRequestError('Device is not allowed for check-in');
                 }
 
                 // 2. Validate session
@@ -178,18 +171,22 @@ export const CheckinModel = {
                 let geofenceRadius = session.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
 
                 if (venueLat == null || venueLon == null) {
-                    const { rows: courseRows } = await pgClient.query(
-                        `SELECT venue_latitude, venue_longitude, geofence_radius_meters
-                         FROM courses
-                         WHERE id = $1`,
-                        [session.course_id]
-                    );
-                    if (courseRows.length > 0) {
-                        venueLat = courseRows[0].venue_latitude;
-                        venueLon = courseRows[0].venue_longitude;
-                        geofenceRadius = geofenceRadius || courseRows[0].geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
+                    let course;
+                    try {
+                        course = await CourseModel.findById(tx as any, session.course_id);
+                    } catch (err) {
+                        if (err instanceof NotFoundError) {
+                            throw new BadRequestError('Course not found for session');
+                        }
+                        throw err;
+                    }
+                    if (course) {
+                        venueLat = course.venue_latitude;
+                        venueLon = course.venue_longitude;
+                        geofenceRadius = geofenceRadius || course.geofence_radius_meters || DEFAULT_GEOFENCE_RADIUS_METERS;
                     }
                 }
+
                 if (!venueLat || !venueLon) {
                     throw new BadRequestError('Session does not have a valid venue location');
                 }
@@ -197,7 +194,7 @@ export const CheckinModel = {
                 const diffDist = haversineDistance(latitude, longitude, venueLat, venueLon);
 
                 let status = CHECKIN_STATUS.PENDING;
-                const requireLiveness = session.require_liveness_check === true;
+                const requireLiveness = session.require_liveness_check !== false;
                 const requireFaceMatch = session.require_face_match === true;
 
                 // 6. Liveness check and face verification
@@ -209,8 +206,8 @@ export const CheckinModel = {
                     throw new BadRequestError('Unable to perform face verification for user');
                 }
 
-                if (requireLiveness && liveness_challenge_response && !isBase64(liveness_challenge_response)) {
-                    throw new BadRequestError('Liveness challenge response must be a valid base64 string');
+                if (requireLiveness && (!liveness_challenge_response || !isBase64(liveness_challenge_response))) {
+                    throw new BadRequestError('Liveness challenge response is required and must be a valid base64 string');
                 }
 
                 const verificationImage = face_verification_image || liveness_challenge_response;
@@ -462,32 +459,16 @@ export const CheckinModel = {
 
             if (session_id) where.session_id = session_id;
             if (course_id) {
-                params.push(course_id);
-                where.push(`s.course_id = $${params.length}`);
-            }
-            if (student_id) {
-                params.push(student_id);
-                where.push(`ci.student_id = $${params.length}`);
-            }
-            if (status && status.length > 0) {
-                params.push(status);
-                where.push(`ci.status::text = ANY($${params.length}::text[])`);
-            }
-            if (min_risk_score !== undefined) {
-                params.push(min_risk_score);
-                where.push(`ci.risk_score >= $${params.length}`);
-            }
-            if (max_risk_score !== undefined) {
-                params.push(max_risk_score);
-                where.push(`ci.risk_score <= $${params.length}`);
-            }
-            if (start_date) {
-                params.push(start_date);
-                where.push(`ci.checked_in_at >= $${params.length}`);
-            }
-            if (end_date) {
-                params.push(end_date);
-                where.push(`ci.checked_in_at <= $${params.length}`);
+                if (where.sessions && where.sessions.courses) {
+                    where.sessions = {
+                        AND: [
+                            { courses: where.sessions.courses },
+                            { course_id }
+                        ]
+                    };
+                } else {
+                    where.sessions = { ...where.sessions, course_id };
+                }
             }
             if (student_id) where.student_id = student_id;
             if (status && status.length > 0) where.status = { in: status };
