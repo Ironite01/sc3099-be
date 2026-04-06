@@ -121,7 +121,7 @@ async function adminController(fastify: FastifyInstance) {
                     status: { type: 'string', enum: Object.values(SESSION_STATUS) }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma
         const sessionId = (req.params as any).session_id;
@@ -160,6 +160,80 @@ async function adminController(fastify: FastifyInstance) {
             is_active: enrollment.is_active,
             enrolled_at: enrollment.enrolled_at
         });
+    });
+
+    fastify.post(`${uri}/course-tas`, {
+        schema: {
+            body: {
+                type: 'object',
+                required: ['course_id', 'ta_id'],
+                properties: {
+                    course_id: { type: 'string' },
+                    ta_id: { type: 'string' }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { course_id, ta_id } = req.body as { course_id: string; ta_id: string };
+
+            const taCheck = await pgClient.query(
+                `SELECT id, role FROM users WHERE id = $1 LIMIT 1`,
+                [ta_id]
+            );
+            if (taCheck.rowCount === 0 || taCheck.rows[0]?.role !== USER_ROLE_TYPES.TA) {
+                res.status(400).send({ detail: 'Invalid TA user' });
+                return;
+            }
+
+            const courseCheck = await pgClient.query(
+                `SELECT id FROM courses WHERE id = $1 LIMIT 1`,
+                [course_id]
+            );
+            if (courseCheck.rowCount === 0) {
+                res.status(404).send({ detail: 'Course not found' });
+                return;
+            }
+
+            await pgClient.query(
+                `INSERT INTO course_tas (course_id, ta_id)
+                 VALUES ($1, $2)
+                 ON CONFLICT DO NOTHING`,
+                [course_id, ta_id]
+            );
+
+            res.status(201).send({ course_id, ta_id, assigned: true });
+        } finally {
+            pgClient.release();
+        }
+    });
+
+    fastify.delete(`${uri}/course-tas`, {
+        schema: {
+            body: {
+                type: 'object',
+                required: ['course_id', 'ta_id'],
+                properties: {
+                    course_id: { type: 'string' },
+                    ta_id: { type: 'string' }
+                }
+            }
+        },
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const pgClient = await fastify.pg.connect();
+        try {
+            const { course_id, ta_id } = req.body as { course_id: string; ta_id: string };
+            await pgClient.query(
+                `DELETE FROM course_tas WHERE course_id = $1 AND ta_id = $2`,
+                [course_id, ta_id]
+            );
+            res.status(204).send();
+        } finally {
+            pgClient.release();
+        }
     });
 }
 
