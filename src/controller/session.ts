@@ -119,7 +119,7 @@ async function sessionController(fastify: any) {
                     course_id: { type: 'string' },
                     instructor_id: { type: 'string' },
                     name: { type: 'string' },
-                    session_type: { type: 'string', enum: ['lecture', 'tutorial', 'lab', 'other'], default: 'lecture' },
+                    session_type: { type: 'string', enum: Object.values(SESSION_TYPE), default: 'lecture' },
                     description: { type: 'string' },
                     scheduled_start: { type: 'string', format: 'date-time' },
                     scheduled_end: { type: 'string', format: 'date-time' },
@@ -142,10 +142,6 @@ async function sessionController(fastify: any) {
             const user = req.user as any;
             if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
                 (req.body as any).instructor_id = user.sub;
-            }
-            if (user.role === USER_ROLE_TYPES.ADMIN && !(req.body as any)?.instructor_id) {
-                res.status(400).send({ detail: 'instructor_id is required when admin creates a session' });
-                return;
             }
             const session = await SessionModel.create(pgClient, req.body as any);
 

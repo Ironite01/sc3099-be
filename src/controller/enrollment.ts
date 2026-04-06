@@ -159,29 +159,17 @@ function enrollmentController(fastify: FastifyInstance) {
         const enrollmentId = (req.params as { enrollment_id: string }).enrollment_id;
         const enrollment = await EnrollmentModel.delete(prisma, { id: user.sub, role: user.role }, enrollmentId);
 
-            if (enrollment) {
-                const details: Record<string, string> = {};
-                if (enrollment.student_id) {
-                    details.student_id = enrollment.student_id;
-                }
-                if (enrollment.course_id) {
-                    details.course_id = enrollment.course_id;
-                }
-                await AuditModel.log(pgClient, {
-                    userId: user.sub,
-                    action: AUDIT_ACTIONS.ENROLLMENT_REMOVED,
-                    resourceType,
-                    resourceId: enrollmentId,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent'] || '',
-                    success: true,
-                    details
-                });
-            }
-
-            res.status(204).send();
-        } finally {
-            pgClient.release();
+        if (enrollment) {
+            await AuditModel.log(prisma, {
+                userId: user.sub,
+                action: AUDIT_ACTIONS.ENROLLMENT_REMOVED,
+                resourceType,
+                resourceId: enrollmentId,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
+            });
         }
 
         res.status(204).send();

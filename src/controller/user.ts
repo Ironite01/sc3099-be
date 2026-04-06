@@ -103,32 +103,9 @@ async function userController(fastify: FastifyInstance) {
             const requesterUserId = (req?.user as any).sub;
             const requesterUserRole = (req?.user as any).role;
 
-                const { user_id: requestedUserId } = req?.params as any;
-                if (!requestedUserId) {
-                    throw new NotFoundError();
-                }
-                let user;
-                if (requesterUserRole === USER_ROLE_TYPES.ADMIN) {
-                    user = await UserModel.getByIdAllowInactive(pgClient, requestedUserId);
-                } else if (requesterUserRole === USER_ROLE_TYPES.INSTRUCTOR) {
-                    user = await UserModel.getEnrolledUserByInstructorId(pgClient, requesterUserId, requestedUserId);
-                } else {
-                    throw new UnauthorizedError();
-                }
-
-                res.status(200).send({
-                    id: user!.id,
-                    email: user!.email,
-                    full_name: user!.full_name,
-                    role: user!.role,
-                    is_active: user!.is_active,
-                    camera_consent: user!.camera_consent,
-                    geolocation_consent: user!.geolocation_consent,
-                    face_enrolled: user!.face_enrolled,
-                    created_at: user!.created_at
-                });
-            } finally {
-                pgClient.release();
+            const { user_id: requestedUserId } = req?.params as any;
+            if (!requestedUserId) {
+                throw new NotFoundError();
             }
             let user;
             if (requesterUserRole === USER_ROLE_TYPES.ADMIN) {
@@ -170,41 +147,10 @@ async function userController(fastify: FastifyInstance) {
         },
         preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const { user_id } = req.params as any;
-            if (!user_id) {
-                throw new NotFoundError();
-            }
-            // Guard: Prevent admin role escalation or demotion
-            const requesterUserId = (req?.user as any).sub;
-            const requesterUserRole = (req?.user as any).role;
-            const patchRole = req.body && typeof req.body.role === 'string' ? req.body.role.toLowerCase() : undefined;
-            // Fetch the target user
-            const targetUser = await UserModel.getById(pgClient, user_id);
-            if (patchRole) {
-                // Prevent promoting anyone to admin, or demoting an admin
-                if (patchRole === USER_ROLE_TYPES.ADMIN) {
-                    throw new UnauthorizedError('Cannot assign admin role');
-                }
-                if (targetUser.role === USER_ROLE_TYPES.ADMIN) {
-                    throw new UnauthorizedError('Cannot change role of an admin');
-                }
-            }
-            const user = await UserModel.patchUserById(pgClient, user_id, req.body as any);
-
-            res.status(200).send({
-                id: user.id,
-                email: user.email,
-                full_name: user.full_name,
-                role: user.role,
-                camera_consent: user.camera_consent,
-                geolocation_consent: user.geolocation_consent,
-                face_enrolled: user.face_enrolled,
-                created_at: user.created_at
-            });
-        } finally {
-            pgClient.release();
+        const prisma = fastify.prisma;
+        const { user_id } = req.params as any;
+        if (!user_id) {
+            throw new NotFoundError();
         }
         const user = await UserModel.patchUserById(prisma, user_id, req.body as any);
 
