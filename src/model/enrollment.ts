@@ -20,17 +20,36 @@ export const EnrollmentModel = {
                 throw new NotFoundError();
             }
             // We do not consider if course and enrollments are active or not
-            const { rows } = await pgClient.query(
-                `SELECT c.name as course_name, c.code as course_code, c.semester, c.id as course_id, COALESCE(u.full_name, 'Unassigned') as instructor_name, e.enrolled_at, e.id, e.is_active
-                 FROM enrollments e
-                 JOIN courses c ON c.id = e.course_id
-                 LEFT JOIN users u ON u.id = c.instructor_id
-                 WHERE e.student_id = $1
-                   AND e.is_active = TRUE
-                   AND c.is_active = TRUE
-                 ORDER BY e.enrolled_at DESC`,
-                [studentId]
-            );
+            const enrollments = await prisma.enrollments.findMany({
+                where: {
+                    student_id: studentId,
+                    is_active: true,
+                    courses: {
+                        is: {
+                            is_active: true
+                        }
+                    }
+                },
+                select: {
+                    id: true,
+                    is_active: true,
+                    enrolled_at: true,
+                    courses: {
+                        select: {
+                            id: true,
+                            code: true,
+                            name: true,
+                            semester: true,
+                            users: {
+                                select: {
+                                    full_name: true
+                                }
+                            }
+                        }
+                    }
+                },
+                orderBy: { enrolled_at: 'desc' }
+            });
 
             const data: any = enrollments.map(e => ({
                 id: e.id,

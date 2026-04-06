@@ -51,28 +51,24 @@ async function sessionController(fastify: any) {
         preHandler: [fastify.rateLimit()]
     },
         async (req: FastifyRequest, res: FastifyReply) => {
-            const pgClient = await fastify.pg.connect();
-            try {
-                // We assume that this API may have some filters
-                const queryStrings = req?.query as any;
-                const sessions = await SessionModel.getActiveSessions(pgClient, queryStrings);
-                res.status(200).send(sessions.map(s => ({
-                    id: s.id,
-                    course_id: s.course_id,
-                    course_code: s.course_code,
-                    name: s.name,
-                    status: s.status,
-                    scheduled_start: s.scheduled_start,
-                    scheduled_end: s.scheduled_end,
-                    checkin_opens_at: s.checkin_opens_at,
-                    checkin_closes_at: s.checkin_closes_at,
-                    venue_name: s.venue_name,
-                    require_liveness_check: s.require_liveness_check,
-                    require_face_match: s.require_face_match
-                })));
-            } finally {
-                pgClient.release();
-            }
+            const prisma = fastify.prisma;
+            // We assume that this API may have some filters
+            const queryStrings = req?.query as any;
+            const sessions = await SessionModel.getActiveSessions(prisma, queryStrings);
+            res.status(200).send(sessions.map(s => ({
+                id: s.id,
+                course_id: s.course_id,
+                course_code: s.course_code,
+                name: s.name,
+                status: s.status,
+                scheduled_start: s.scheduled_start,
+                scheduled_end: s.scheduled_end,
+                checkin_opens_at: s.checkin_opens_at,
+                checkin_closes_at: s.checkin_closes_at,
+                venue_name: s.venue_name,
+                require_liveness_check: s.require_liveness_check,
+                require_face_match: s.require_face_match
+            })));
         });
 
     fastify.get(`${uri}/my-sessions`, {

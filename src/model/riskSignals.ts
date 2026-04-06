@@ -132,38 +132,6 @@ export const RiskSignalModel = {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
-
-        const values: any[] = [];
-        const placeholders = signals.map((signal, index) => {
-            const baseIndex = index * 7;
-            values.push(
-                checkinId,
-                signal.signal_type,
-                signal.severity,
-                signal.confidence,
-                signal.details ? JSON.stringify(signal.details) : null,
-                signal.weight,
-                signal.detected_at
-            );
-            return `(gen_random_uuid()::text, $${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7})`;
-        });
-
-        const { rows } = await pgClient.query(
-            `INSERT INTO risk_signals (
-                id,
-                checkin_id,
-                signal_type,
-                severity,
-                confidence,
-                details,
-                weight,
-                detected_at
-            ) VALUES ${placeholders.join(', ')}
-            RETURNING id, checkin_id, signal_type, severity, confidence, details, weight, detected_at`,
-            values
-        );
-
-        return rows as RiskSignal[];
     },
     getRiskSignalsByCheckinIds: async (prisma: PrismaClient, checkinIds: string[]): Promise<Map<string, RiskSignal[]>> => {
         const signalMap = new Map<string, RiskSignal[]>();
