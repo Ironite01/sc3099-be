@@ -335,21 +335,16 @@ async function checkinController(fastify: FastifyInstance) {
         const studentId = (req.user as any)?.sub;
         const checkins = await CheckinModel.getFilteredCheckinsByStudentId(prisma, studentId, req.query as any);
 
-            res.status(200).send(checkins.map((c) => ({
-                id: c.id,
-                session_id: c.session_id,
-                session_name: c.session_name,
-                course_id: c.course_id,
-                course_code: c.course_code,
-                course_name: c.course_name,
-                status: c.status,
-                checked_in_at: c.checked_in_at,
-                appealed_at: c.appealed_at,
-                risk_score: c.risk_score
-            })));
-        } finally {
-            pgClient.release();
-        }
+        res.status(200).send(checkins.map((c: any) => ({
+            session_id: c.session_id,
+            session_name: c.session_name,
+            course_id: c.course_id,
+            course_code: c.course_code,
+            course_name: c.course_name,
+            status: c.status,
+            checked_in_at: c.checked_in_at,
+            risk_score: c.risk_score
+        })));
     });
 
     fastify.get(`${uri}/session/:sessionId`, {
