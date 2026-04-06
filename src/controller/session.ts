@@ -26,7 +26,7 @@ async function sessionController(fastify: any) {
                 },
                 additionalProperties: false
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const { limit = 50, offset = 0 } = (req.query) as any;
@@ -135,35 +135,13 @@ async function sessionController(fastify: any) {
                     qr_code_enabled: { type: 'boolean', default: false }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest<{ Body: any }>, res: FastifyReply) => {
-        const pgClient = await fastify.pg.connect();
-        try {
-            const user = req.user as any;
-            if (user.role === USER_ROLE_TYPES.INSTRUCTOR) {
-                (req.body as any).instructor_id = user.sub;
-            }
-            const session = await SessionModel.create(pgClient, req.body as any);
-
-            await AuditModel.log(pgClient, {
-                userId: user.sub,
-                action: AUDIT_ACTIONS.SESSION_CREATED,
-                resourceType,
-                resourceId: session.id,
-                ipAddress: req.ip,
-                userAgent: req.headers['user-agent'] || '',
-                deviceId: '',
-                success: true,
-                details: {
-                    course_id: session.course_id,
-                    session_name: session.name,
-                    scheduled_start: session.scheduled_start
-                }
-            });
-
-            res.status(201).send(session);
-        } finally {
-            pgClient.release();
+        // In this endpoint, we also allow TA since there is a relation with them and sessions.
+        const prisma = fastify.prisma;
+        const user = req.user as any;
+        if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
+            (req.body as any).instructor_id = user.sub;
         }
         const session = await SessionModel.create(prisma, {
             ...req.body as any,
@@ -216,7 +194,7 @@ async function sessionController(fastify: any) {
                     qr_code_enabled: { type: 'boolean' }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const user = req.user as any;
@@ -246,7 +224,7 @@ async function sessionController(fastify: any) {
                 required: ['session_id'],
                 properties: { session_id: { type: 'string' } }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.TA, USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const user = req.user as any;
