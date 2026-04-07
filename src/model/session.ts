@@ -157,12 +157,22 @@ export const SessionModel = {
                         course_id: true,
                         instructor_id: true,
                         name: true,
+                        session_type: true,
+                        description: true,
                         status: true,
                         scheduled_start: true,
                         scheduled_end: true,
                         checkin_opens_at: true,
                         checkin_closes_at: true,
+                        venue_name: true,
+                        venue_latitude: true,
+                        venue_longitude: true,
+                        geofence_radius_meters: true,
+                        require_liveness_check: true,
+                        require_face_match: true,
+                        risk_threshold: true,
                         qr_code_enabled: true,
+                        updated_at: true,
                         courses: {
                             select: {
                                 _count: {

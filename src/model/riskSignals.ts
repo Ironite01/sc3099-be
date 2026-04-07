@@ -92,17 +92,26 @@ export function buildRiskSignals(
     detectedAt: Date,
     recommendations: string[]
 ): Omit<RiskSignal, 'id' | 'checkin_id'>[] {
-    return Object.entries(signalBreakdown).map(([signalType, rawWeight]) => {
+    // Multiple ML keys can map to the same persisted signal_type; collapse to one row per type.
+    const dedupedByType = new Map<string, number>();
+    for (const [signalType, rawWeight] of Object.entries(signalBreakdown)) {
+        const normalizedType = normalizeSignalType(signalType);
         const weight = Number(rawWeight) || 0;
-        return {
-            signal_type: normalizeSignalType(signalType),
-            severity: getSignalSeverity(weight),
-            confidence: 1,
-            details: recommendations.length ? { recommendations } : null,
-            weight,
-            detected_at: detectedAt
-        };
-    });
+        const existing = dedupedByType.get(normalizedType);
+
+        if (existing === undefined || Math.abs(weight) > Math.abs(existing)) {
+            dedupedByType.set(normalizedType, weight);
+        }
+    }
+
+    return Array.from(dedupedByType.entries()).map(([signal_type, weight]) => ({
+        signal_type,
+        severity: getSignalSeverity(weight),
+        confidence: 1,
+        details: recommendations.length ? { recommendations } : null,
+        weight,
+        detected_at: detectedAt
+    }));
 }
 
 export const RiskSignalModel = {
