@@ -9,7 +9,7 @@ function enrollmentController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/enrollments`;
     const resourceType = 'enrollment';
 
-    fastify.get(`${uri}/my-enrollments`, { preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT]), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
+    fastify.get(`${uri}/my-enrollments`, { preHandler: [fastify.authorize([USER_ROLE_TYPES.STUDENT, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {
             const studentId = (req.user as any)?.sub;

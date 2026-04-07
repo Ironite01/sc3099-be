@@ -133,7 +133,7 @@ async function adminController(fastify: FastifyInstance) {
                     status: { type: 'string', enum: Object.values(SESSION_STATUS) }
                 }
             }
-        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
+        }, preHandler: [fastify.authorize([USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const pgClient = await fastify.pg.connect();
         try {

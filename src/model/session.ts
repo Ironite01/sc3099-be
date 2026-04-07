@@ -556,6 +556,18 @@ export const SessionModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
+    activateDueScheduledSessions: async function (pgClient: any): Promise<number> {
+        const result = await pgClient.query(
+            `UPDATE sessions
+             SET status = $1,
+                 actual_start = COALESCE(actual_start, NOW()),
+                 updated_at = NOW()
+             WHERE status = $2
+               AND scheduled_start <= NOW()`,
+            [SESSION_STATUS.ACTIVE, SESSION_STATUS.SCHEDULED]
+        );
+        return result.rowCount ?? 0;
+    },
     // TODO: Everything below needs to be refactored and tested accordingly
     closeExpiredActiveSessions: async function (pgClient: any): Promise<number> {
         const result = await pgClient.query(
@@ -564,8 +576,8 @@ export const SessionModel = {
                  actual_end = COALESCE(actual_end, NOW()),
                  updated_at = NOW()
              WHERE status = $2
-               AND checkin_closes_at IS NOT NULL
-               AND checkin_closes_at < NOW()`,
+               AND COALESCE(checkin_closes_at, scheduled_end) IS NOT NULL
+               AND COALESCE(checkin_closes_at, scheduled_end) < NOW()`,
             [SESSION_STATUS.CLOSED, SESSION_STATUS.ACTIVE]
         );
         return result.rowCount ?? 0;

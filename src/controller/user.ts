@@ -182,9 +182,9 @@ async function userController(fastify: FastifyInstance) {
             const requesterUserId = (req?.user as any).sub;
             const requesterUserRole = (req?.user as any).role;
             const patchRole = req.body && typeof req.body.role === 'string' ? req.body.role.toLowerCase() : undefined;
-            // Fetch the target user
-            const targetUser = await UserModel.getById(pgClient, user_id);
             if (patchRole) {
+                // Fetch target user only when role changes are requested.
+                const targetUser = await UserModel.getByIdAllowInactive(pgClient, user_id);
                 // Prevent promoting anyone to admin, or demoting an admin
                 if (patchRole === USER_ROLE_TYPES.ADMIN) {
                     throw new UnauthorizedError('Cannot assign admin role');

@@ -39,7 +39,7 @@ async function exportController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { courseId } = req.params as { courseId: string };
         const { format = 'csv', start_date, end_date } = req.query as {
@@ -134,7 +134,7 @@ async function exportController(fastify: FastifyInstance) {
                 }
             }
         },
-        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR]), fastify.rateLimit()]
+        preHandler: [fastify.authorize([USER_ROLE_TYPES.INSTRUCTOR, USER_ROLE_TYPES.ADMIN]), fastify.rateLimit()]
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const { sessionId } = req.params as { sessionId: string };
         const { format = 'csv' } = req.query as { format?: string };
