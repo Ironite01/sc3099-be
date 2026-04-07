@@ -62,6 +62,13 @@ try {
         .register(dataRetentionCron)
         .register(controller);
 
+    server.addHook('onClose', async () => {
+        if (sessionLifecycleTimer) {
+            clearInterval(sessionLifecycleTimer);
+            sessionLifecycleTimer = null;
+        }
+    });
+
     const address = await server.listen({ port: server.config.PORT!!, host: server.config.HOST!! });
     console.log(`Server listening at ${address}`);
 
@@ -73,13 +80,6 @@ try {
             console.error(`[session-lifecycle] interval error: ${e?.message || e}`);
         });
     }, lifecycleIntervalMs);
-
-    server.addHook('onClose', async () => {
-        if (sessionLifecycleTimer) {
-            clearInterval(sessionLifecycleTimer);
-            sessionLifecycleTimer = null;
-        }
-    });
 
     const mlHealthResponse = await MlServices.health.get();
     console.log(`ML Service Health: ${mlHealthResponse.status}`);
