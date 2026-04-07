@@ -31,18 +31,16 @@ const server = fastify({
 let sessionLifecycleTimer: NodeJS.Timeout | null = null;
 
 async function runSessionLifecycleSweep() {
-    const pgClient = await (server as any).pg.connect();
+    const prisma = await (server as any).pg.connect();
     try {
-        const autoActivated = await SessionModel.activateDueScheduledSessions(pgClient);
-        const autoClosed = await SessionModel.closeExpiredActiveSessions(pgClient);
+        const autoActivated = await SessionModel.activateDueScheduledSessions(prisma);
+        const autoClosed = await SessionModel.closeExpiredActiveSessions(prisma);
 
         if (autoActivated > 0 || autoClosed > 0) {
             console.log(`[session-lifecycle] auto-activated=${autoActivated}, auto-closed=${autoClosed}`);
         }
     } catch (e: any) {
         console.error(`[session-lifecycle] sweep failed: ${e?.message || e}`);
-    } finally {
-        pgClient.release();
     }
 }
 
