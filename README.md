@@ -10,6 +10,8 @@ NODE_ENV=development
 DATABASE_URL=postgres://postgres:password@127.0.0.1/capstone
 
 REDIS_URL=redis://localhost:6379
+
+# Set this to false to enable Redis limiting
 REDIS_LIMIT_HIGH=true
 
 SECRET_KEY=somesecret

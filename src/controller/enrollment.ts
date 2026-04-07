@@ -168,7 +168,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent'] || '',
                 success: true,
-                details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
+                details: { student_id: enrollment?.student_id ?? undefined, course_id: enrollment?.course_id ?? undefined }
             });
         }
 

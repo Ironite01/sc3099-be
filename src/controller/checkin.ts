@@ -283,6 +283,7 @@ async function checkinController(fastify: FastifyInstance) {
         const checkins = await CheckinModel.getFilteredCheckinsByStudentId(prisma, studentId, req.query as any);
 
         res.status(200).send(checkins.map((c: any) => ({
+            id: c.id,
             session_id: c.session_id,
             session_name: c.session_name,
             course_id: c.course_id,
@@ -290,6 +291,7 @@ async function checkinController(fastify: FastifyInstance) {
             course_name: c.course_name,
             status: c.status,
             checked_in_at: c.checked_in_at,
+            appealed_at: c.appealed_at,
             risk_score: c.risk_score
         })));
     });

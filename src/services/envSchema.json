@@ -12,7 +12,7 @@
     "properties": {
         "REDIS_LIMIT_HIGH": {
             "type": "string",
-            "default": "false"
+            "default": "true"
         },
         "PORT": {
             "type": "string",

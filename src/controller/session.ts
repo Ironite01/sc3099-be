@@ -4,8 +4,7 @@ import { SessionModel, SESSION_STATUS, SESSION_TYPE } from '../model/session.js'
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { BASE_URL } from '../helpers/constants.js';
-
-// TODO: Check how to do maybeCloseExpiredSessions
+import { BadRequestError } from '../model/error.js';
 
 async function sessionController(fastify: any) {
     const uri = `${BASE_URL}/sessions`;
@@ -138,6 +137,9 @@ async function sessionController(fastify: any) {
         const user = req.user as any;
         if (user.role === USER_ROLE_TYPES.INSTRUCTOR || user.role === USER_ROLE_TYPES.TA) {
             (req.body as any).instructor_id = user.sub;
+        }
+        if (user.role === USER_ROLE_TYPES.ADMIN && !(req.body as any)?.instructor_id) {
+            throw new BadRequestError('instructor_id is required when admin creates a session');
         }
         const session = await SessionModel.create(prisma, {
             ...req.body as any,

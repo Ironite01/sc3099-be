@@ -565,7 +565,8 @@ export const CheckinModel = {
                     sessions: { select: { name: true, course_id: true, courses: { select: { code: true, name: true } } } },
                     status: true,
                     checked_in_at: true,
-                    risk_score: true
+                    risk_score: true,
+                    appealed_at: true
                 },
                 orderBy: { checked_in_at: 'desc' },
                 take: Math.max(1, Math.min(limit, 200))

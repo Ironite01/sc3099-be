@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { BASE_URL } from "../helpers/constants.js";
-import { NotFoundError, UnauthorizedError } from "../model/error.js";
+import { ForbiddenError, NotFoundError, UnauthorizedError } from "../model/error.js";
 import { AUDIT_ACTIONS, AuditModel } from "../model/audit.js";
 import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
 
@@ -34,6 +34,9 @@ async function userController(fastify: FastifyInstance) {
     fastify.get(`${uri}/me`, { preHandler: [fastify.authorize(), fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const user = await UserModel.getById(prisma, (req?.user as any)?.sub);
+        if (!user.is_active) {
+            throw new ForbiddenError("Account disabled");
+        }
         res.status(200).send({
             id: user.id,
             email: user.email,
@@ -121,6 +124,7 @@ async function userController(fastify: FastifyInstance) {
                 email: user!.email,
                 full_name: user!.full_name,
                 role: user!.role,
+                is_active: user!.is_active,
                 camera_consent: user!.camera_consent,
                 geolocation_consent: user!.geolocation_consent,
                 face_enrolled: user!.face_enrolled,
@@ -151,6 +155,19 @@ async function userController(fastify: FastifyInstance) {
         const { user_id } = req.params as any;
         if (!user_id) {
             throw new NotFoundError();
+        }
+        // Guard: Prevent admin role escalation or demotion
+        const patchRole = req.body && typeof (req.body as any).role === 'string' ? (req.body as any).role.toLowerCase() : undefined;
+        // Fetch the target user
+        const targetUser = await UserModel.getById(prisma, user_id);
+        if (patchRole) {
+            // Prevent promoting anyone to admin, or demoting an admin
+            if (patchRole === USER_ROLE_TYPES.ADMIN) {
+                throw new UnauthorizedError('Cannot assign admin role');
+            }
+            if (targetUser.role === USER_ROLE_TYPES.ADMIN) {
+                throw new UnauthorizedError('Cannot change role of an admin');
+            }
         }
         const user = await UserModel.patchUserById(prisma, user_id, req.body as any);
 

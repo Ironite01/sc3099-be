@@ -705,26 +705,6 @@ export const SessionModel = {
             throw new BadRequestError('Database operation failed');
         }
     },
-    // TODO: Use this somehow...
-    closeExpiredActiveSessions: async (prisma: PrismaClient): Promise<number> => {
-        try {
-            const result = await prisma.sessions.updateMany({
-                where: {
-                    status: SESSION_STATUS.ACTIVE,
-                    checkin_closes_at: { lt: new Date() }
-                },
-                data: {
-                    status: SESSION_STATUS.CLOSED,
-                    actual_end: new Date(),
-                    updated_at: new Date()
-                }
-            });
-            return result.count;
-        } catch (err: any) {
-            if (err instanceof AppError) throw err;
-            throw new BadRequestError('Database operation failed');
-        }
-    },
     issueQr: async (prisma: PrismaClient, user: { sub: string, role: USER_ROLE_TYPES }, id: string): Promise<SessionQrPayload> => {
         try {
             const results = await SessionModel.getAllFilteredSessions(prisma, user, { session_id: id, limit: 1 });
