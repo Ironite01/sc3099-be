@@ -31,7 +31,7 @@ const server = fastify({
 let sessionLifecycleTimer: NodeJS.Timeout | null = null;
 
 async function runSessionLifecycleSweep() {
-    const prisma = await (server as any).pg.connect();
+    const prisma = await server.prisma;
     try {
         const autoActivated = await SessionModel.activateDueScheduledSessions(prisma);
         const autoClosed = await SessionModel.closeExpiredActiveSessions(prisma);
