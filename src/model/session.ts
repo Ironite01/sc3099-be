@@ -801,11 +801,11 @@ export const SessionModel = {
         try {
             const [result1, result2] = await Promise.all([
                 prisma.sessions.updateMany({
-                    where: { status: SESSION_STATUS.ACTIVE, actual_end: null },
+                    where: { status: SESSION_STATUS.ACTIVE, actual_end: null, checkin_closes_at: { lte: new Date() } },
                     data: { status: SESSION_STATUS.CLOSED, actual_end: new Date(), updated_at: new Date() }
                 }),
                 prisma.sessions.updateMany({
-                    where: { status: SESSION_STATUS.ACTIVE, actual_end: { not: null } },
+                    where: { status: SESSION_STATUS.ACTIVE, actual_end: { not: null }, checkin_closes_at: { lte: new Date() } },
                     data: { status: SESSION_STATUS.CLOSED, updated_at: new Date() }
                 })
             ]);
