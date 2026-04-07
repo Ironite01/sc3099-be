@@ -14,6 +14,7 @@ import { MlServices } from './services/ml/index.js';
 import metricsPlugin from './services/metrics.js';
 import prismaPlugin from './services/prisma.js';
 import dataRetentionCron from './services/dataRetentionCron.js';
+import { SessionModel } from './model/session.js';
 
 const server = fastify({
     ignoreTrailingSlash: true,
@@ -25,6 +26,25 @@ const server = fastify({
         }
     }
 });
+
+
+let sessionLifecycleTimer: NodeJS.Timeout | null = null;
+
+async function runSessionLifecycleSweep() {
+    const pgClient = await (server as any).pg.connect();
+    try {
+        const autoActivated = await SessionModel.activateDueScheduledSessions(pgClient);
+        const autoClosed = await SessionModel.closeExpiredActiveSessions(pgClient);
+
+        if (autoActivated > 0 || autoClosed > 0) {
+            console.log(`[session-lifecycle] auto-activated=${autoActivated}, auto-closed=${autoClosed}`);
+        }
+    } catch (e: any) {
+        console.error(`[session-lifecycle] sweep failed: ${e?.message || e}`);
+    } finally {
+        pgClient.release();
+    }
+}
 
 try {
     await server.register(fastifyEnv, { schema: envSchema, dotenv: true });
@@ -46,6 +66,22 @@ try {
 
     const address = await server.listen({ port: server.config.PORT!!, host: server.config.HOST!! });
     console.log(`Server listening at ${address}`);
+
+
+    const lifecycleIntervalMs = Math.max(5000, Number(process.env.SESSION_LIFECYCLE_INTERVAL_MS || 30000));
+    await runSessionLifecycleSweep();
+    sessionLifecycleTimer = setInterval(() => {
+        runSessionLifecycleSweep().catch((e: any) => {
+            console.error(`[session-lifecycle] interval error: ${e?.message || e}`);
+        });
+    }, lifecycleIntervalMs);
+
+    server.addHook('onClose', async () => {
+        if (sessionLifecycleTimer) {
+            clearInterval(sessionLifecycleTimer);
+            sessionLifecycleTimer = null;
+        }
+    });
 
     const mlHealthResponse = await MlServices.health.get();
     console.log(`ML Service Health: ${mlHealthResponse.status}`);

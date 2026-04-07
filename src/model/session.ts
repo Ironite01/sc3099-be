@@ -762,5 +762,58 @@ export const SessionModel = {
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }
+    },
+    activateDueScheduledSessions: async (prisma: PrismaClient): Promise<number> => {
+        try {
+            const [result1, result2] = await Promise.all([
+                prisma.sessions.updateMany({
+                    where: {
+                        status: SESSION_STATUS.SCHEDULED,
+                        scheduled_start: { lte: new Date() },
+                        actual_start: null
+                    },
+                    data: {
+                        status: SESSION_STATUS.ACTIVE,
+                        actual_start: new Date(),
+                        updated_at: new Date()
+                    }
+                }),
+                prisma.sessions.updateMany({
+                    where: {
+                        status: SESSION_STATUS.SCHEDULED,
+                        scheduled_start: { lte: new Date() },
+                        actual_start: { not: null }
+                    },
+                    data: {
+                        status: SESSION_STATUS.ACTIVE,
+                        updated_at: new Date()
+                    }
+                })
+            ]);
+
+            return (result1.count ?? 0) + (result2.count ?? 0);
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    closeExpiredActiveSessions: async (prisma: PrismaClient): Promise<number> => {
+        try {
+            const [result1, result2] = await Promise.all([
+                prisma.sessions.updateMany({
+                    where: { status: SESSION_STATUS.ACTIVE, actual_end: null },
+                    data: { status: SESSION_STATUS.CLOSED, actual_end: new Date(), updated_at: new Date() }
+                }),
+                prisma.sessions.updateMany({
+                    where: { status: SESSION_STATUS.ACTIVE, actual_end: { not: null } },
+                    data: { status: SESSION_STATUS.CLOSED, updated_at: new Date() }
+                })
+            ]);
+
+            return (result1.count ?? 0) + (result2.count ?? 0);
+        } catch (err: any) {
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
     }
 }

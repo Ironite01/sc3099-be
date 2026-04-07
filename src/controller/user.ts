@@ -158,9 +158,9 @@ async function userController(fastify: FastifyInstance) {
         }
         // Guard: Prevent admin role escalation or demotion
         const patchRole = req.body && typeof (req.body as any).role === 'string' ? (req.body as any).role.toLowerCase() : undefined;
-        // Fetch the target user
-        const targetUser = await UserModel.getById(prisma, user_id);
         if (patchRole) {
+            // Fetch target user only when role changes are requested.
+            const targetUser = await UserModel.getById(prisma, user_id);
             // Prevent promoting anyone to admin, or demoting an admin
             if (patchRole === USER_ROLE_TYPES.ADMIN) {
                 throw new UnauthorizedError('Cannot assign admin role');
