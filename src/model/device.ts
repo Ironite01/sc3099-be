@@ -264,7 +264,7 @@ export const DeviceModel = {
 
             return await prisma.$transaction(async (tx) => {
                 const updated = await tx.devices.update({
-                    where: USER_ROLE_TYPES.STUDENT ? { id: deviceId, user_id: userId } : { id: deviceId },
+                    where: userRole === USER_ROLE_TYPES.STUDENT ? { id: deviceId, user_id: userId } : { id: deviceId },
                     data: updateData,
                     select: {
                         id: true,

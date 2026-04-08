@@ -581,7 +581,8 @@ export const CheckinModel = {
                 course_name: c.sessions?.courses?.name,
                 status: c.status,
                 checked_in_at: c.checked_in_at,
-                risk_score: c.risk_score
+                risk_score: c.risk_score,
+                appealed_at: c.appealed_at
             }));
 
             delete data.sessions;

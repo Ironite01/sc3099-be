@@ -60,8 +60,27 @@ function validation(fastify: FastifyInstance) {
         const detail = isKnownAppError
             ? (error.message || statusDefaultMessage[String(statusCode) as keyof typeof statusDefaultMessage])
             : statusDefaultMessage["500"];
-        request.log.error(error);
-        console.log(error);
+        if (statusCode >= 500) {
+            request.log.error(error);
+        } else if (statusCode === 401 || statusCode === 403) {
+            request.log.debug(
+                {
+                    method: request.method,
+                    url: request.url,
+                    statusCode
+                },
+                detail
+            );
+        } else {
+            request.log.warn(
+                {
+                    method: request.method,
+                    url: request.url,
+                    statusCode
+                },
+                detail
+            );
+        }
         reply.status(statusCode).send({
             statusCode,
             error: statusDefaultMessage[String(statusCode) as keyof typeof statusDefaultMessage] || 'Error',
