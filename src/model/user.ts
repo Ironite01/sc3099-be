@@ -212,6 +212,8 @@ export const UserModel = {
                     hashed_password,
                     role: role!.toLowerCase() as any,
                     is_active: true,
+                    camera_consent: true,
+                    geolocation_consent: true,
                     created_at: new Date(),
                     updated_at: new Date()
                 },

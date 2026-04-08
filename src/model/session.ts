@@ -442,6 +442,8 @@ export const SessionModel = {
     }) => {
         try {
             const { instructor_id, course_id, name, scheduled_start, scheduled_end } = payload;
+            const startDate = new Date(scheduled_start);
+            const endDate = new Date(scheduled_end);
             let checkin_opens_at = payload?.checkin_opens_at ? new Date(payload.checkin_opens_at) : null;
             let checkin_closes_at = payload?.checkin_closes_at ? new Date(payload.checkin_closes_at) : null;
 
@@ -450,8 +452,9 @@ export const SessionModel = {
             }
 
             const now = new Date();
-            const startDate = new Date(scheduled_start);
-            const endDate = new Date(scheduled_end);
+            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                throw new BadRequestError('Invalid scheduled_start or scheduled_end');
+            }
 
             if (startDate <= now) {
                 throw new BadRequestError('scheduled_start must be in the future');
@@ -469,10 +472,25 @@ export const SessionModel = {
             }
 
             if (!checkin_closes_at) {
-                checkin_closes_at = new Date(new Date(scheduled_start).getTime() + 30 * 60 * 1000);
+                checkin_closes_at = new Date(startDate.getTime() + 30 * 60 * 1000);
             }
             if (!checkin_opens_at) {
-                checkin_opens_at = new Date(new Date(scheduled_start).getTime() - 15 * 60 * 1000);
+                checkin_opens_at = new Date(startDate.getTime() - 15 * 60 * 1000);
+            }
+
+            const courseDefaults = await CourseModel.findById(prisma, course_id);
+            const resolvedVenueLatitude = payload.venue_latitude ?? courseDefaults.venue_latitude ?? null;
+            const resolvedVenueLongitude = payload.venue_longitude ?? courseDefaults.venue_longitude ?? null;
+            const resolvedVenueName = payload.venue_name ?? courseDefaults.venue_name ?? null;
+            const resolvedGeofenceRadius = payload.geofence_radius_meters ?? courseDefaults.geofence_radius_meters ?? null;
+            const resolvedRiskThreshold = payload.risk_threshold ?? courseDefaults.risk_threshold ?? null;
+            const resolvedInstructorId = instructor_id ?? courseDefaults.instructor_id ?? null;
+
+            if (payload?.checkin_opens_at && isNaN(checkin_opens_at.getTime())) {
+                throw new BadRequestError('Invalid checkin_opens_at');
+            }
+            if (payload?.checkin_closes_at && isNaN(checkin_closes_at.getTime())) {
+                throw new BadRequestError('Invalid checkin_closes_at');
             }
 
             let qr_code_secret = null;
@@ -488,22 +506,22 @@ export const SessionModel = {
                 data: {
                     id: randomUUID(),
                     course_id,
-                    instructor_id,
+                    instructor_id: resolvedInstructorId,
                     name,
                     session_type: payload.session_type || SESSION_TYPE.OTHER,
                     ...(payload.description !== undefined && { description: payload.description }),
-                    scheduled_start,
-                    scheduled_end,
+                    scheduled_start: startDate,
+                    scheduled_end: endDate,
                     checkin_opens_at,
                     checkin_closes_at,
                     status: payload.status || SESSION_STATUS.SCHEDULED,
-                    ...(payload.venue_latitude !== undefined && { venue_latitude: payload.venue_latitude }),
-                    ...(payload.venue_longitude !== undefined && { venue_longitude: payload.venue_longitude }),
-                    ...(payload.venue_name !== undefined && { venue_name: payload.venue_name }),
-                    ...(payload.geofence_radius_meters !== undefined && { geofence_radius_meters: payload.geofence_radius_meters }),
+                    ...(resolvedVenueLatitude !== null && { venue_latitude: resolvedVenueLatitude }),
+                    ...(resolvedVenueLongitude !== null && { venue_longitude: resolvedVenueLongitude }),
+                    ...(resolvedVenueName !== null && { venue_name: resolvedVenueName }),
+                    ...(resolvedGeofenceRadius !== null && { geofence_radius_meters: resolvedGeofenceRadius }),
                     ...(payload.require_liveness_check !== undefined && { require_liveness_check: payload.require_liveness_check }),
                     ...(payload.require_face_match !== undefined && { require_face_match: payload.require_face_match }),
-                    ...(payload.risk_threshold !== undefined && { risk_threshold: payload.risk_threshold }),
+                    ...(resolvedRiskThreshold !== null && { risk_threshold: resolvedRiskThreshold }),
                     qr_code_enabled: payload.qr_code_enabled || false,
                     qr_code_secret,
                     qr_code_expires_at,

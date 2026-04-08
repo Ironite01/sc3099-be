@@ -141,9 +141,13 @@ async function sessionController(fastify: any) {
         if (user.role === USER_ROLE_TYPES.ADMIN && !(req.body as any)?.instructor_id) {
             throw new BadRequestError('instructor_id is required when admin creates a session');
         }
+        const configuredRiskThreshold = Number(fastify.config.RISK_SCORE_THRESHOLD);
+        const fallbackRiskThreshold = Number.isFinite(configuredRiskThreshold) ? configuredRiskThreshold : undefined;
+        const requestRiskThreshold = (req.body as any).risk_threshold;
+
         const session = await SessionModel.create(prisma, {
             ...req.body as any,
-            risk_threshold: (req.body as any).risk_threshold || fastify.config.RISK_SCORE_THRESHOLD || undefined
+            risk_threshold: requestRiskThreshold ?? fallbackRiskThreshold
         });
 
         await AuditModel.log(prisma, {
