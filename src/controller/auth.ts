@@ -1,10 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { createHash, randomBytes } from 'crypto';
 import { USER_ROLE_TYPES, UserModel } from '../model/user.js';
 import { BASE_URL } from '../helpers/constants.js';
 import { UnauthorizedError } from '../model/error.js';
 import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { loginTotal, registrationTotal } from '../services/metrics.js';
+import { sendPasswordResetEmail } from '../services/mail.js';
 
 async function authController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/auth`;
@@ -123,7 +125,6 @@ async function authController(fastify: FastifyInstance) {
         } catch (err) {
             loginTotal.inc({ status: 'failure' });
 
-            // Check for multiple failed login attempts (brute force detection)
             const failedAttemptsKey = `failed_login:${req.ip}`;
             let failedAttempts = 0;
             try {
@@ -131,11 +132,10 @@ async function authController(fastify: FastifyInstance) {
                 if (redis) {
                     const current = await redis.incr(failedAttemptsKey);
                     if (current === 1) {
-                        await redis.expire(failedAttemptsKey, 3600); // 1 hour window
+                        await redis.expire(failedAttemptsKey, 3600);
                     }
                     failedAttempts = current || 0;
 
-                    // Log as security_violation if multiple failures detected
                     if (failedAttempts >= 5) {
                         await AuditModel.log(prisma, {
                             userId: null,
@@ -241,7 +241,7 @@ async function authController(fastify: FastifyInstance) {
         if (shouldSetAuthCookies) {
             res.setCookie('access_token', accessToken, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+                secure: process.env.NODE_ENV === 'production',
                 sameSite: 'strict',
                 path: '/',
                 maxAge: ACCESS_TOKEN_TTL
@@ -258,7 +258,114 @@ async function authController(fastify: FastifyInstance) {
         res.status(200).send({ refresh_token: newRefreshToken, access_token: accessToken, user });
     });
 
-    // Extra endpoint
+    fastify.post(`${uri}/forgot-password`, {
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    email: {
+                        type: 'string',
+                        format: 'email'
+                    }
+                },
+                required: ['email'],
+                additionalProperties: false
+            }
+        },
+        preHandler: [fastify.rateLimit({
+            limit: 10,
+            window: 3600,
+            keyGenerator: (req: FastifyRequest) => `rl:forgot-password:${req.ip}`
+        })]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const prisma = fastify.prisma;
+        const { email }: any = req.body;
+
+        const genericResponse = {
+            success: true,
+            message: 'If the account exists, a password reset link has been sent.'
+        };
+
+        try {
+            const user = await UserModel.getByEmail(prisma, String(email).toLowerCase());
+            if (!user?.is_active) {
+                return res.status(200).send(genericResponse);
+            }
+
+            const rawToken = randomBytes(32).toString('hex');
+            const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+            const key = `pwdreset:${tokenHash}`;
+            await fastify.redis.set(key, user.id, { EX: 15 * 60 });
+
+            const appBase = fastify.config.APP_URL || fastify.config.FRONTEND_URL || 'http://localhost:3000';
+            const resetLink = `${appBase.replace(/\/+$/, '')}/reset-password?token=${encodeURIComponent(rawToken)}`;
+            await sendPasswordResetEmail(fastify, { to: user.email, resetLink });
+
+            await AuditModel.log(prisma, {
+                userId: user.id,
+                action: AUDIT_ACTIONS.USER_UPDATED,
+                resourceType,
+                resourceId: user.id,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent'] || '',
+                success: true,
+                details: { email: user.email, event: 'password_reset_requested' }
+            });
+        } catch (err: any) {
+            console.warn('[auth/forgot-password] handled with generic response:', err?.message || err);
+        }
+
+        return res.status(200).send(genericResponse);
+    });
+
+    fastify.post(`${uri}/reset-password`, {
+        schema: {
+            body: {
+                type: 'object',
+                properties: {
+                    token: { type: 'string', minLength: 16 },
+                    password: { type: 'string', minLength: 8 }
+                },
+                required: ['token', 'password'],
+                additionalProperties: false
+            }
+        },
+        preHandler: [fastify.rateLimit({
+            limit: 30,
+            window: 3600,
+            keyGenerator: (req: FastifyRequest) => `rl:reset-password:${req.ip}`
+        })]
+    }, async (req: FastifyRequest, res: FastifyReply) => {
+        const prisma = fastify.prisma;
+        const { token, password }: any = req.body;
+
+        const tokenHash = createHash('sha256').update(String(token)).digest('hex');
+        const key = `pwdreset:${tokenHash}`;
+        const userId = await fastify.redis.get(key);
+        if (!userId) {
+            throw new UnauthorizedError('Invalid or expired reset token');
+        }
+
+        await UserModel.updatePasswordById(prisma, userId, String(password));
+        await fastify.redis.del(key);
+
+        await AuditModel.log(prisma, {
+            userId,
+            action: AUDIT_ACTIONS.USER_UPDATED,
+            resourceType,
+            resourceId: userId,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'] || '',
+            success: true,
+            details: { event: 'password_reset_completed' }
+        });
+
+        return res.status(200).send({
+            success: true,
+            message: 'Password has been reset successfully.'
+        });
+    });
+
     fastify.post(`${uri}/logout`, { preHandler: [fastify.rateLimit()] }, async (req: FastifyRequest, res: FastifyReply) => {
         const userId = (req.user as any)?.sub;
         if (userId) {

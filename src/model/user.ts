@@ -23,6 +23,35 @@ export const USER_ROLE_HIERARCHY: Record<USER_ROLE_TYPES, number> = {
 const SALT_ROUNDS = parseInt(process.env.SALT_ROUNDS!! || '10');
 
 export const UserModel = {
+    getByEmail: async function getByEmail(prisma: PrismaClient, email: string) {
+        try {
+            if (!email) {
+                throw new NotFoundError();
+            }
+
+            return await prisma.users.findUniqueOrThrow({
+                where: { email },
+                select: {
+                    id: true,
+                    email: true,
+                    full_name: true,
+                    role: true,
+                    is_active: true,
+                    created_at: true,
+                    last_login_at: true,
+                    camera_consent: true,
+                    geolocation_consent: true,
+                    face_enrolled: true
+                }
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError();
+            }
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
     getUsersByEmail: async (prisma: PrismaClient, emails: string[]) => {
         try {
             return await prisma.users.findMany({
@@ -317,6 +346,40 @@ export const UserModel = {
                     camera_consent: true,
                     geolocation_consent: true,
                     face_enrolled: true
+                }
+            });
+        } catch (err: any) {
+            if (err?.code === PrismaCodeMap.NOT_FOUND) {
+                throw new NotFoundError();
+            }
+            if (err instanceof AppError) throw err;
+            throw new BadRequestError('Database operation failed');
+        }
+    },
+    updatePasswordById: async function updatePasswordById(prisma: PrismaClient, userId: string, nextPassword: string) {
+        try {
+            if (!userId) {
+                throw new NotFoundError();
+            }
+
+            const currentUser = await prisma.users.findUniqueOrThrow({
+                where: { id: userId },
+                select: { hashed_password: true }
+            });
+
+            const isSamePassword = await bcrypt.compare(nextPassword, currentUser.hashed_password);
+            if (isSamePassword) {
+                throw new BadRequestError('New password must be different from your current password');
+            }
+
+            const salt = bcrypt.genSaltSync(SALT_ROUNDS);
+            const hashed_password = bcrypt.hashSync(nextPassword, salt);
+
+            await prisma.users.update({
+                where: { id: userId },
+                data: {
+                    hashed_password,
+                    updated_at: new Date()
                 }
             });
         } catch (err: any) {

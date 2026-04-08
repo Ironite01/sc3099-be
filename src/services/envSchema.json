@@ -30,6 +30,10 @@
             "type": "string",
             "default": "http://localhost:8501"
         },
+        "APP_URL": {
+            "type": "string",
+            "default": "http://localhost:3000"
+        },
         "DATABASE_URL": {
             "type": "string",
             "default": "postgres://postgres:password@127.0.0.1/capstone"
@@ -57,6 +61,26 @@
         "RISK_SCORE_THRESHOLD": {
             "type": "string",
             "default": 0.5
+        },
+        "EMAIL_SMTP_HOST": {
+            "type": "string",
+            "default": ""
+        },
+        "EMAIL_SMTP_PORT": {
+            "type": "string",
+            "default": "587"
+        },
+        "EMAIL_SMTP_USER": {
+            "type": "string",
+            "default": ""
+        },
+        "EMAIL_SMTP_PASS": {
+            "type": "string",
+            "default": ""
+        },
+        "EMAIL_FROM": {
+            "type": "string",
+            "default": "no-reply@saiv.local"
         }
     }
 }
