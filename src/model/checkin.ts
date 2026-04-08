@@ -334,6 +334,7 @@ export const CheckinModel = {
                     }
                 });
                 const signalBreakdown = typeof signal_breakdown === 'object' ? signal_breakdown : JSON.parse(signal_breakdown);
+
                 for (const [key, value] of Object.entries(signalBreakdown)) {
                     const weight = Number(value) || 0;
                     riskFactors.push({
@@ -356,7 +357,7 @@ export const CheckinModel = {
                 }
                 const riskSignals = buildRiskSignals(signalBreakdown, now, recommendations || []);
 
-                if ((requireLiveness && !livenessPassed) || diffDist > geofenceRadius * 2) {
+                if ((requireLiveness && !livenessPassed) || (requireFaceMatch && !matchPassed) || diffDist > geofenceRadius * 2) {
                     status = CHECKIN_STATUS.REJECTED;
                 } else if (!Boolean(pass_threshold)) {
                     status = CHECKIN_STATUS.FLAGGED;
