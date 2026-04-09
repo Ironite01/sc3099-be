@@ -36,7 +36,7 @@ services:
       retries: 5
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     container_name: saiv-postgres
     environment:
       POSTGRES_USER: postgres
@@ -67,31 +67,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: saiv-prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-    networks:
-      - saiv-network
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: saiv-grafana
-    ports:
-      - "3001:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-    networks:
-      - saiv-network
 
 volumes:
   postgres_data:
