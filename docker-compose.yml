@@ -1,0 +1,104 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: saiv-backend
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/capstone
+      REDIS_URL: redis://redis:6379
+      REDIS_LIMIT_HIGH: "true"
+      SECRET_KEY: your-secret-key
+      EMAIL_SMTP_HOST: smtp.gmail.com
+      EMAIL_SMTP_PORT: 587
+      EMAIL_SMTP_USER: kristiguin26556@gmail.com
+      EMAIL_SMTP_PASS: ebghyznnnnkcmcbh
+      EMAIL_FROM: "SAIV <kristiguin26556@gmail.com>"
+      FRONTEND_URL: http://host.docker.internal:3000
+      DASHBOARD_URL: http://host.docker.internal:8501
+      ML_URL: http://host.docker.internal:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - saiv-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: saiv-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: capstone
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    networks:
+      - saiv-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: saiv-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - saiv-network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: saiv-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    networks:
+      - saiv-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: saiv-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - saiv-network
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+
+
+networks:
+  saiv-network:
+    driver: bridge
