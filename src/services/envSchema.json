@@ -1,6 +1,7 @@
 {
     "type": "object",
     "required": [
+        "HOST",
         "PORT",
         "FRONTEND_URL",
         "ML_URL",
@@ -13,6 +14,10 @@
         "REDIS_LIMIT_HIGH": {
             "type": "string",
             "default": "true"
+        },
+        "HOST": {
+            "type": "string",
+            "default": "localhost"
         },
         "PORT": {
             "type": "string",
