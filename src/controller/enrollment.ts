@@ -4,6 +4,13 @@ import { USER_ROLE_TYPES } from "../model/user.js";
 import { AUDIT_ACTIONS, AuditModel } from "../model/audit.js";
 import { EnrollmentModel } from "../model/enrollment.js";
 import { BASE_URL } from "../helpers/constants.js";
+import { invalidateCachePattern } from "../helpers/cacheHelper.js";
+
+async function invalidateStats(redis: any): Promise<void> {
+    await invalidateCachePattern(redis, 'stats:overview*');
+    await invalidateCachePattern(redis, 'stats:course*');
+    await invalidateCachePattern(redis, 'stats:student*');
+}
 
 function enrollmentController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/enrollments`;
@@ -99,6 +106,7 @@ function enrollmentController(fastify: FastifyInstance) {
             success: true,
             details: { student_id: enrollment.student_id, course_id: enrollment.course_id }
         });
+        await invalidateStats(fastify.redis);
 
         res.status(201).send({
             id: enrollment.id,
@@ -132,6 +140,7 @@ function enrollmentController(fastify: FastifyInstance) {
         const userRole = (req.user as any)?.role;
         const { course_id, student_emails, create_accounts = false } = req.body as any;
         const results = await EnrollmentModel.bulkCreate(prisma, { id: userId, role: userRole }, course_id, student_emails, create_accounts);
+        await invalidateStats(fastify.redis);
         res.status(200).send({
             course_id,
             enrolled: results.enrolled,
@@ -171,6 +180,7 @@ function enrollmentController(fastify: FastifyInstance) {
                 details: { student_id: enrollment?.student_id ?? undefined, course_id: enrollment?.course_id ?? undefined }
             });
         }
+        await invalidateStats(fastify.redis);
 
         res.status(204).send();
     });

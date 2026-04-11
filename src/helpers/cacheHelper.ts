@@ -73,20 +73,23 @@ export function generateStatsCacheKey(type: string, id?: string, params?: Record
  */
 export async function invalidateCachePattern(redis: any, pattern: string): Promise<number> {
     try {
-        let cursor = '';
+        let cursor = '0';
         let deletedCount = 0;
 
-        do {
+        while (true) {
             const { cursor: newCursor, keys } = await redis.scan(cursor, {
                 MATCH: pattern,
                 COUNT: 100,
             });
-            cursor = newCursor;
+            cursor = String(newCursor);
 
             if (keys.length > 0) {
                 deletedCount += await redis.del(keys);
             }
-        } while (cursor !== '');
+            if (cursor === '0') {
+                break;
+            }
+        }
 
         return deletedCount;
     } catch (err) {

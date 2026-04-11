@@ -3,6 +3,13 @@ import fp from 'fastify-plugin';
 import { BASE_URL } from '../helpers/constants.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { CourseModel } from '../model/course.js';
+import { invalidateCachePattern } from '../helpers/cacheHelper.js';
+
+async function invalidateStats(redis: any): Promise<void> {
+    await invalidateCachePattern(redis, 'stats:overview*');
+    await invalidateCachePattern(redis, 'stats:course*');
+    await invalidateCachePattern(redis, 'stats:student*');
+}
 
 async function courseController(fastify: any) {
     const uri = `${BASE_URL}/courses`;
@@ -76,6 +83,7 @@ async function courseController(fastify: any) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         const course = await CourseModel.create(prisma, req.body as any);
+        await invalidateStats(fastify.redis);
         res.status(201).send(course);
     });
 
@@ -107,6 +115,7 @@ async function courseController(fastify: any) {
         const prisma = fastify.prisma;
         const user = req.user as any;
         const course = await CourseModel.update(prisma, (req.params as any).course_id, req.body as any, user);
+        await invalidateStats(fastify.redis);
         res.status(200).send(course);
     });
 
@@ -121,6 +130,7 @@ async function courseController(fastify: any) {
     }, async (req: FastifyRequest, res: FastifyReply) => {
         const prisma = fastify.prisma;
         await CourseModel.delete(prisma, (req.params as any).course_id);
+        await invalidateStats(fastify.redis);
         res.status(204).send();
     });
 }

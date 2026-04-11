@@ -33,6 +33,13 @@ export const checkinTotal = new Counter({
     registers: [registry],
 });
 
+export const checkinStatusCurrent = new Gauge({
+    name: 'saiv_checkin_status_current',
+    help: 'Current number of check-ins in each status (DB snapshot)',
+    labelNames: ['status'] as const, // pending | approved | flagged | rejected | appealed
+    registers: [registry],
+});
+
 export const deviceRegistrationTotal = new Counter({
     name: 'saiv_device_registration_total',
     help: 'Total device registrations (upserts)',
@@ -87,6 +94,30 @@ async function metricsPlugin(fastify: FastifyInstance) {
 
     // Expose /metrics endpoint — no authentication required for Prometheus scraping
     fastify.get('/metrics', { logLevel: 'warn' }, async (_req, reply) => {
+        // Keep active session gauge aligned with current DB state.
+        try {
+            const activeCount = await (fastify as any).prisma.sessions.count({
+                where: { status: 'active' }
+            });
+            activeSessionsGauge.set(activeCount);
+
+            // Keep current check-in status totals aligned with DB state.
+            const grouped = await (fastify as any).prisma.checkins.groupBy({
+                by: ['status'],
+                _count: { _all: true }
+            });
+            const statusMap = new Map<string, number>();
+            for (const row of grouped as Array<{ status: string; _count: { _all: number } }>) {
+                statusMap.set(String(row.status), Number(row._count?._all || 0));
+            }
+            const knownStatuses = ['pending', 'approved', 'flagged', 'rejected', 'appealed'];
+            for (const status of knownStatuses) {
+                checkinStatusCurrent.set({ status }, statusMap.get(status) || 0);
+            }
+        } catch {
+            // Keep metrics endpoint available even if DB read fails transiently.
+        }
+
         reply.header('Content-Type', registry.contentType);
         return reply.send(await registry.metrics());
     });

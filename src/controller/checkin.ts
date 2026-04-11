@@ -7,6 +7,14 @@ import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { LivenessChallengeType } from '../services/ml/liveness/check.js';
 import { randomUUID } from 'node:crypto';
 import { checkinTotal, riskScoreHistogram, checkinDistanceHistogram } from '../services/metrics.js';
+import { invalidateCachePattern } from '../helpers/cacheHelper.js';
+
+async function invalidateStats(redis: any): Promise<void> {
+    await invalidateCachePattern(redis, 'stats:overview*');
+    await invalidateCachePattern(redis, 'stats:session*');
+    await invalidateCachePattern(redis, 'stats:course*');
+    await invalidateCachePattern(redis, 'stats:student*');
+}
 
 async function checkinController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/checkins`;
@@ -192,7 +200,7 @@ async function checkinController(fastify: FastifyInstance) {
             checkinTotal.inc({ status: checkin.status });
             riskScoreHistogram.observe(checkin.risk_score);
             checkinDistanceHistogram.observe(checkin.distance_from_venue_meters);
-
+            await invalidateStats(fastify.redis);
 
             res.status(201).send({
                 id: checkin.id,
@@ -352,14 +360,22 @@ async function checkinController(fastify: FastifyInstance) {
         res.status(200).send({
             items: result.items.map((i: any) => ({
                 id: i.id,
+                course_id: i.course_id,
+                course_code: i.course_code,
                 session_id: i.session_id,
                 session_name: i.session_name,
                 student_id: i.student_id,
                 student_name: i.student_name,
+                student_email: i.student_email,
                 status: i.status,
                 checked_in_at: i.checked_in_at,
                 risk_score: i.risk_score,
                 risk_factors: i.risk_factors,
+                distance_from_venue_meters: i.distance_from_venue_meters,
+                liveness_passed: i.liveness_passed,
+                liveness_score: i.liveness_score,
+                face_match_passed: i.face_match_passed,
+                face_match_score: i.face_match_score,
                 appeal_reason: i.appeal_reason,
                 appealed_at: i.appealed_at
             })),
@@ -430,6 +446,7 @@ async function checkinController(fastify: FastifyInstance) {
                 appealed_at: result.appealed_at
             }
         });
+        await invalidateStats(fastify.redis);
 
         res.status(200).send({
             id: result.id,
@@ -495,6 +512,7 @@ async function checkinController(fastify: FastifyInstance) {
             success: true,
             details
         });
+        await invalidateStats(fastify.redis);
 
         res.status(200).send({
             id: result.id,

@@ -68,6 +68,18 @@ function normalizeSignalType(signalType: string): string {
 }
 
 export function normalizeRiskFactors(value: any): any[] {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return [];
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed && typeof parsed === 'object') return [parsed];
+            return [];
+        } catch {
+            return [];
+        }
+    }
     if (Array.isArray(value)) return value;
     if (value && typeof value === 'object') return [value];
     return [];

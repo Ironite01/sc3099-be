@@ -263,6 +263,20 @@ export const DeviceModel = {
             }
 
             return await prisma.$transaction(async (tx) => {
+                const existing = await tx.devices.findFirstOrThrow({
+                    where: userRole === USER_ROLE_TYPES.STUDENT ? { id: deviceId, user_id: userId } : { id: deviceId },
+                    select: {
+                        id: true,
+                        user_id: true,
+                        revoked_at: true,
+                        revocation_reason: true
+                    }
+                });
+
+                if (existing.revoked_at || existing.revocation_reason) {
+                    throw new ForbiddenError('Revoked devices cannot be modified');
+                }
+
                 const updated = await tx.devices.update({
                     where: userRole === USER_ROLE_TYPES.STUDENT ? { id: deviceId, user_id: userId } : { id: deviceId },
                     data: updateData,
@@ -368,6 +382,8 @@ export const DeviceModel = {
                         is_trusted: true,
                         trust_score: true,
                         is_active: true,
+                        revoked_at: true,
+                        revocation_reason: true,
                         first_seen_at: true,
                         last_seen_at: true,
                         total_checkins: true,
@@ -392,6 +408,8 @@ export const DeviceModel = {
                     is_trusted: d.is_trusted,
                     trust_score: d.trust_score,
                     is_active: d.is_active,
+                    revoked_at: d.revoked_at,
+                    revocation_reason: d.revocation_reason,
                     first_seen_at: d.first_seen_at,
                     last_seen_at: d.last_seen_at,
                     total_checkins: d.total_checkins

@@ -495,17 +495,33 @@ export const CheckinModel = {
                     select: {
                         id: true,
                         session_id: true,
-                        sessions: { select: { name: true, actual_start: true, course_id: true, courses: { select: { code: true } } } },
+                        sessions: {
+                            select: {
+                                name: true,
+                                actual_start: true,
+                                scheduled_start: true,
+                                course_id: true,
+                                courses: { select: { code: true } }
+                            }
+                        },
                         student_id: true,
                         users_checkins_student_idTousers: { select: { full_name: true, email: true } },
                         status: true,
                         checked_in_at: true,
+                        latitude: true,
+                        longitude: true,
                         distance_from_venue_meters: true,
                         risk_score: true,
                         risk_factors: true,
                         liveness_passed: true,
+                        liveness_score: true,
+                        face_match_passed: true,
+                        face_match_score: true,
                         appealed_at: true,
-                        appeal_reason: true
+                        appeal_reason: true,
+                        reviewed_by_id: true,
+                        reviewed_at: true,
+                        review_notes: true
                     },
                     orderBy: { checked_in_at: 'desc' },
                     ...(isFinite(limit) && { take: Math.max(1, Math.min(limit, 200)) }),
@@ -518,7 +534,7 @@ export const CheckinModel = {
                 id: c.id,
                 session_id: c.session_id,
                 session_name: c.sessions?.name,
-                session_date: c.sessions?.actual_start,
+                session_date: c.sessions?.actual_start ?? c.sessions?.scheduled_start ?? null,
                 course_id: c.sessions?.course_id,
                 course_code: c.sessions?.courses?.code,
                 student_id: c.student_id,
@@ -526,12 +542,20 @@ export const CheckinModel = {
                 student_email: c.users_checkins_student_idTousers?.email,
                 status: c.status,
                 checked_in_at: c.checked_in_at,
+                latitude: c.latitude,
+                longitude: c.longitude,
                 distance_from_venue_meters: c.distance_from_venue_meters,
                 risk_score: c.risk_score,
                 risk_factors: normalizeRiskFactors(c.risk_factors),
                 liveness_passed: c.liveness_passed,
+                liveness_score: c.liveness_score,
+                face_match_passed: c.face_match_passed,
+                face_match_score: c.face_match_score,
                 appealed_at: c.appealed_at,
                 appeal_reason: c.appeal_reason,
+                reviewed_by_id: c.reviewed_by_id,
+                reviewed_at: c.reviewed_at,
+                review_notes: c.review_notes,
                 risk_signals: signalMap.get(c.id) || []
             }));
             delete items.sessions;
@@ -707,6 +731,7 @@ export const CheckinModel = {
                     distance_from_venue_meters: true,
                     liveness_passed: true,
                     liveness_score: true,
+                    face_match_score: true,
                     risk_score: true,
                     risk_factors: true,
                     devices: { select: { is_trusted: true } }
@@ -729,6 +754,7 @@ export const CheckinModel = {
                 distance_from_venue_meters: c.distance_from_venue_meters,
                 liveness_passed: c.liveness_passed,
                 liveness_score: c.liveness_score,
+                face_match_score: c.face_match_score,
                 risk_score: c.risk_score,
                 risk_factors: normalizeRiskFactors(c.risk_factors),
                 device_is_trusted: c.devices?.is_trusted,

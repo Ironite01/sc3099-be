@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { PrismaClient, courses as Course } from '../generated/prisma/client.js';
-import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "./error.js";
+import { AppError, BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from "./error.js";
 import { USER_ROLE_TYPES } from "./user.js";
 import { PrismaCodeMap } from '../helpers/prismaCodeMap.js';
 
@@ -62,6 +62,23 @@ export const CourseModel = {
                 }), total
             };
         } catch (err: any) {
+            console.error('[CourseModel.create] Prisma error:', {
+                code: err?.code,
+                message: err?.message,
+                meta: err?.meta
+            });
+            if (err?.code === PrismaCodeMap.CONFLICT) {
+                throw new ConflictError('Course code already exists');
+            }
+            if (err?.code === 'P2003') {
+                throw new BadRequestError('Invalid instructor selected');
+            }
+            if (err?.code === 'P2000') {
+                throw new BadRequestError('One or more fields are too long (code max 20, semester max 20)');
+            }
+            if (err?.code === 'P2011') {
+                throw new BadRequestError('A required course field is missing');
+            }
             if (err instanceof AppError) throw err;
             throw new BadRequestError('Database operation failed');
         }

@@ -5,6 +5,7 @@ import { AUDIT_ACTIONS, AuditModel } from '../model/audit.js';
 import { USER_ROLE_TYPES } from '../model/user.js';
 import { BASE_URL } from '../helpers/constants.js';
 import { BadRequestError } from '../model/error.js';
+import { invalidateCachePattern } from '../helpers/cacheHelper.js';
 
 async function sessionController(fastify: any) {
     const uri = `${BASE_URL}/sessions`;
@@ -165,6 +166,8 @@ async function sessionController(fastify: any) {
                 scheduled_start: session.scheduled_start
             }
         });
+        await invalidateCachePattern(fastify.redis, `stats:course:${session.course_id}*`);
+        await invalidateCachePattern(fastify.redis, `stats:overview*`);
 
         res.status(201).send(session);
     });
@@ -215,6 +218,9 @@ async function sessionController(fastify: any) {
                 session_name: session.name
             }
         });
+        await invalidateCachePattern(fastify.redis, `stats:session:${session.id}*`);
+        await invalidateCachePattern(fastify.redis, `stats:course:${session.course_id}*`);
+        await invalidateCachePattern(fastify.redis, `stats:overview*`);
 
         res.status(200).send(session);
     });
@@ -246,6 +252,9 @@ async function sessionController(fastify: any) {
                 session_name: session.name
             }
         });
+        await invalidateCachePattern(fastify.redis, `stats:session:${session.id}*`);
+        await invalidateCachePattern(fastify.redis, `stats:course:${session.course_id}*`);
+        await invalidateCachePattern(fastify.redis, `stats:overview*`);
         res.status(204).send();
     });
 

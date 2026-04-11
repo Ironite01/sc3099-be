@@ -4,6 +4,14 @@ import { BASE_URL } from "../helpers/constants.js";
 import { USER_ROLE_TYPES, UserModel } from "../model/user.js";
 import { SESSION_STATUS, SessionModel } from '../model/session.js';
 import { EnrollmentModel } from '../model/enrollment.js';
+import { invalidateCachePattern } from '../helpers/cacheHelper.js';
+
+async function invalidateStats(redis: any): Promise<void> {
+    await invalidateCachePattern(redis, 'stats:overview*');
+    await invalidateCachePattern(redis, 'stats:session*');
+    await invalidateCachePattern(redis, 'stats:course*');
+    await invalidateCachePattern(redis, 'stats:student*');
+}
 
 async function adminController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/admin`;
@@ -127,6 +135,7 @@ async function adminController(fastify: FastifyInstance) {
         const sessionId = (req.params as any).session_id;
         const nextStatus = (req.body as any).status;
         const session = await SessionModel.updateStatusById(prisma, req.user as any, sessionId, nextStatus);
+        await invalidateStats(fastify.redis);
 
         res.status(200).send({
             id: session!.id,
@@ -152,6 +161,7 @@ async function adminController(fastify: FastifyInstance) {
         const prisma = fastify.prisma
         const { student_id, course_id } = req.body as { student_id: string; course_id: string };
         const enrollment = await EnrollmentModel.create(prisma, req.user as any, { studentId: student_id, courseId: course_id });
+        await invalidateStats(fastify.redis);
 
         res.status(201).send({
             id: enrollment.id,

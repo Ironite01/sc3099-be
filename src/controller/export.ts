@@ -19,6 +19,22 @@ function toCsv(rows: Record<string, unknown>[]): string {
     ].join('\n');
 }
 
+function toIsoString(value: unknown): string {
+    if (!value) return '';
+    const d = value instanceof Date ? value : new Date(String(value));
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
+function toJsonCell(value: unknown): string {
+    if (value == null) return '';
+    if (typeof value === 'string') return value;
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
+
 async function exportController(fastify: FastifyInstance) {
     const uri = `${BASE_URL}/export`;
     const resourceType = 'export';
@@ -60,25 +76,22 @@ async function exportController(fastify: FastifyInstance) {
         const allCheckins = checkinRes.items;
         if (allCheckins.length === 0) {
             if (format === 'json') {
-                return res.status(200).send({
-                    course_id: courseId,
-                    summary: {
-                        total_enrolled: 0,
-                        total_records: 0,
-                        attendance_rate: 0
-                    },
-                    records: []
-                });
+                return res.status(200).send([]);
             }
             return res.status(200).send('');
         }
 
         const rows = allCheckins.map((r: any) => ({
-            "Student Name": r.student_name,
-            "Email": r.student_email,
-            "Session Name": r.session_name,
-            "Session Date": r.session_date,
-            "Status": r.status
+            student_id: r.student_id ?? '',
+            student_name: r.student_name ?? '',
+            student_email: r.student_email ?? '',
+            session_date: toIsoString(r.session_date),
+            session_name: r.session_name ?? '',
+            status: r.status ?? '',
+            checked_in_at: toIsoString(r.checked_in_at),
+            risk_score: r.risk_score ?? '',
+            risk_factors: toJsonCell(r.risk_factors),
+            risk_signals: toJsonCell(r.risk_signals)
         }));
 
         const safeCode = allCheckins[0]!.course_code.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -87,15 +100,7 @@ async function exportController(fastify: FastifyInstance) {
         if (format === 'json') {
             res.header('Content-Type', 'application/json');
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.json"`);
-            return res.status(200).send({
-                course_id: courseId,
-                summary: {
-                    total_enrolled: rows.length,
-                    total_records: rows.length,
-                    attendance_rate: 100
-                },
-                records: rows
-            });
+            return res.status(200).send(rows);
         }
 
         const csv = toCsv(rows as Record<string, unknown>[]);
@@ -136,6 +141,23 @@ async function exportController(fastify: FastifyInstance) {
         const { format = 'csv' } = req.query as { format?: string };
 
         const prisma = fastify.prisma
+        const sessionMeta = await prisma.sessions.findUnique({
+            where: { id: sessionId },
+            select: {
+                id: true,
+                name: true,
+                course_id: true
+            }
+        });
+        const totalEnrolled = sessionMeta
+            ? await prisma.enrollments.count({
+                where: {
+                    course_id: sessionMeta.course_id,
+                    is_active: true
+                }
+            })
+            : 0;
+
         const checkinRes = await CheckinModel.getFilteredCheckins(prisma, req.user as any, {
             session_id: sessionId,
             limit: Infinity
@@ -149,9 +171,13 @@ async function exportController(fastify: FastifyInstance) {
             if (format === 'json') {
                 return res.status(200).send({
                     session_id: sessionId,
+                    session_name: sessionMeta?.name || '',
                     summary: {
-                        total_enrolled: 0,
-                        total_records: 0,
+                        total_enrolled: totalEnrolled,
+                        total_attempts: 0,
+                        approved: 0,
+                        flagged: 0,
+                        rejected: 0,
                         attendance_rate: 0
                     },
                     records: []
@@ -161,12 +187,21 @@ async function exportController(fastify: FastifyInstance) {
         }
 
         const rows = allCheckins.map((r: any) => ({
-            "Student Name": r.student_name,
-            "Email": r.student_email,
-            "Session Name": r.session_name,
-            "Session Date": r.session_date,
-            "Status": r.status
+            student_id: r.student_id ?? '',
+            student_name: r.student_name ?? '',
+            student_email: r.student_email ?? '',
+            session_date: toIsoString(r.session_date),
+            session_name: r.session_name ?? '',
+            status: r.status ?? '',
+            checked_in_at: toIsoString(r.checked_in_at),
+            risk_score: r.risk_score ?? '',
+            risk_factors: toJsonCell(r.risk_factors),
+            risk_signals: toJsonCell(r.risk_signals)
         }));
+        const approvedCount = allCheckins.filter((r: any) => r.status === 'approved').length;
+        const flaggedCount = allCheckins.filter((r: any) => r.status === 'flagged').length;
+        const rejectedCount = allCheckins.filter((r: any) => r.status === 'rejected').length;
+        const attendanceRate = totalEnrolled > 0 ? approvedCount / totalEnrolled : 0;
 
         const safeCode = allCheckins[0]!.course_code.replace(/[^a-zA-Z0-9_-]/g, '_');
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -176,10 +211,14 @@ async function exportController(fastify: FastifyInstance) {
             res.header('Content-Disposition', `attachment; filename="attendance_${safeCode}_${timestamp}.json"`);
             return res.status(200).send({
                 session_id: sessionId,
+                session_name: sessionMeta?.name || allCheckins[0]?.session_name || '',
                 summary: {
-                    total_enrolled: rows.length,
-                    total_records: rows.length,
-                    attendance_rate: 100
+                    total_enrolled: totalEnrolled,
+                    total_attempts: allCheckins.length,
+                    approved: approvedCount,
+                    flagged: flaggedCount,
+                    rejected: rejectedCount,
+                    attendance_rate: attendanceRate
                 },
                 records: rows
             });

@@ -2,17 +2,33 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import { AppError, BadRequestError, ForbiddenError, NotFoundError } from './error.js';
 import { USER_ROLE_TYPES } from './user.js';
 
+const SGT_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function startOfSgtDayUtc(base: Date): Date {
+    const shifted = base.getTime() + SGT_OFFSET_MS;
+    const dayStartShifted = Math.floor(shifted / DAY_MS) * DAY_MS;
+    return new Date(dayStartShifted - SGT_OFFSET_MS);
+}
+
+function addDays(date: Date, days: number): Date {
+    return new Date(date.getTime() + (days * DAY_MS));
+}
+
+function toSgtDateKey(value: Date): string {
+    const shifted = new Date(value.getTime() + SGT_OFFSET_MS);
+    return shifted.toISOString().slice(0, 10);
+}
+
 export const StatsModel = {
     getOverview: async function (prisma: PrismaClient, user: { sub: string; role: USER_ROLE_TYPES }, params: { days?: number; course_id?: string }) {
         try {
             const { days = 7, course_id } = params;
 
-            const since = new Date();
-            since.setDate(since.getDate() - days);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const weekAgo = new Date();
-            weekAgo.setDate(weekAgo.getDate() - 7);
+            const now = new Date();
+            const todaySgtStart = startOfSgtDayUtc(now);
+            const sinceSgtStart = addDays(todaySgtStart, -(days - 1));
+            const weekAgo = new Date(now.getTime() - (7 * DAY_MS));
 
             // Authorization: Instructors can only see their own courses
             if (user.role === USER_ROLE_TYPES.INSTRUCTOR && course_id) {
@@ -40,14 +56,19 @@ export const StatsModel = {
                 activeSessions,
                 totalCheckinsToday,
                 totalCheckinsWeek,
+                approvedTodayCount,
                 flaggedCount,
                 approvedCount,
                 rejectedCount,
                 checkinStats,
                 highRiskToday,
-                allCheckins,
+                totalCheckinsAll,
                 allEnrolled,
-                recentCheckins
+                recentCheckins,
+                checkinsInRange,
+                sessionsForAttendance,
+                enrollmentsByCourse,
+                checkinsBySession
             ] = await Promise.all([
                 // Count courses
                 prisma.courses.count({
@@ -77,7 +98,7 @@ export const StatsModel = {
                 // Count checkins today
                 prisma.checkins.count({
                     where: {
-                        checked_in_at: { gte: today },
+                        checked_in_at: { gte: todaySgtStart },
                         sessions: { courses: courseWhere }
                     }
                 }),
@@ -85,6 +106,14 @@ export const StatsModel = {
                 prisma.checkins.count({
                     where: {
                         checked_in_at: { gte: weekAgo },
+                        sessions: { courses: courseWhere }
+                    }
+                }),
+                // Count approved checkins today
+                prisma.checkins.count({
+                    where: {
+                        checked_in_at: { gte: todaySgtStart },
+                        status: 'approved',
                         sessions: { courses: courseWhere }
                     }
                 }),
@@ -119,12 +148,12 @@ export const StatsModel = {
                 // Count high risk checkins today
                 prisma.checkins.count({
                     where: {
-                        checked_in_at: { gte: today },
+                        checked_in_at: { gte: todaySgtStart },
                         risk_score: { gte: 0.5 },
                         sessions: { courses: courseWhere }
                     }
                 }),
-                // Count all checkins (for attendance)
+                // Count total check-ins across all statuses (for approval rate)
                 prisma.checkins.count({
                     where: {
                         sessions: { courses: courseWhere }
@@ -154,13 +183,97 @@ export const StatsModel = {
                     },
                     orderBy: { checked_in_at: 'desc' },
                     take: 20
+                }),
+                // Check-ins in selected range (for daily trend + risk distribution)
+                prisma.checkins.findMany({
+                    where: {
+                        checked_in_at: { gte: sinceSgtStart },
+                        sessions: { courses: courseWhere }
+                    },
+                    select: {
+                        checked_in_at: true,
+                        risk_score: true
+                    }
+                }),
+                // Sessions in scope for attendance-rate calculation
+                prisma.sessions.findMany({
+                    where: {
+                        courses: { ...courseWhere, is_active: true }
+                    },
+                    select: {
+                        id: true,
+                        course_id: true
+                    }
+                }),
+                // Active enrollments per course in scope
+                prisma.enrollments.groupBy({
+                    by: ['course_id'],
+                    where: {
+                        is_active: true,
+                        courses: { ...courseWhere, is_active: true }
+                    },
+                    _count: { _all: true }
+                }),
+                // Check-in counts per session in scope
+                prisma.checkins.groupBy({
+                    by: ['session_id'],
+                    where: {
+                        sessions: { courses: { ...courseWhere, is_active: true } },
+                        status: 'approved'
+                    },
+                    _count: { _all: true }
                 })
             ]);
 
-            const decided = approvedCount + rejectedCount;
-            const approvalRate = decided > 0 ? approvedCount / decided : 0;
-            const attendanceRate = allEnrolled > 0 ? allCheckins / allEnrolled : 0;
+            const approvalRate = totalCheckinsToday > 0 ? approvedTodayCount / totalCheckinsToday : 0;
+            // Attendance is average of per-session attendance rates, capped to 100%.
+            // This avoids inflated percentages when multiple sessions exist.
+            const enrollmentMap = new Map<string, number>(
+                enrollmentsByCourse.map((row) => [row.course_id, row._count._all])
+            );
+            const checkinsMap = new Map<string, number>(
+                checkinsBySession.map((row) => [row.session_id, row._count._all])
+            );
+            const sessionRates = sessionsForAttendance.map((s) => {
+                const enrolled = enrollmentMap.get(s.course_id) || 0;
+                if (enrolled <= 0) return 0;
+                const checkedIn = checkinsMap.get(s.id) || 0;
+                return Math.min(checkedIn / enrolled, 1);
+            });
+            const attendanceRate = sessionRates.length > 0
+                ? sessionRates.reduce((acc, r) => acc + r, 0) / sessionRates.length
+                : 0;
             const averageRiskScore = checkinStats._avg?.risk_score || 0;
+            const dailyCounts = new Map<string, number>();
+            const riskDistribution = { low: 0, medium: 0, high: 0 };
+
+            // Build day buckets with zero defaults for the selected range.
+            for (let i = days - 1; i >= 0; i--) {
+                const d = addDays(todaySgtStart, -i);
+                const key = toSgtDateKey(d);
+                dailyCounts.set(key, 0);
+            }
+
+            for (const item of checkinsInRange) {
+                if (item.checked_in_at) {
+                    const key = toSgtDateKey(new Date(item.checked_in_at));
+                    if (dailyCounts.has(key)) {
+                        dailyCounts.set(key, (dailyCounts.get(key) || 0) + 1);
+                    }
+                }
+
+                const score = Number(item.risk_score ?? 0);
+                if (!Number.isFinite(score)) continue;
+                if (score < 0.3) {
+                    riskDistribution.low += 1;
+                } else if (score < 0.5) {
+                    riskDistribution.medium += 1;
+                } else {
+                    riskDistribution.high += 1;
+                }
+            }
+
+            const checkinsByDay = Array.from(dailyCounts.entries()).map(([date, count]) => ({ date, count }));
 
             return {
                 total_courses: totalCourses,
@@ -177,8 +290,9 @@ export const StatsModel = {
                 average_risk_score: parseFloat(String(averageRiskScore)),
                 high_risk_checkins_today: highRiskToday,
                 trends: {
-                    checkins_by_day: []
+                    checkins_by_day: checkinsByDay
                 },
+                risk_distribution: riskDistribution,
                 recent_checkins: recentCheckins.map(rc => ({
                     id: rc.id,
                     student_id: rc.student_id,
@@ -239,7 +353,7 @@ export const StatsModel = {
                     where: { course_id: session.course_id, is_active: true }
                 }),
                 prisma.checkins.count({
-                    where: { session_id: sessionId }
+                    where: { session_id: sessionId, status: 'approved' }
                 }),
                 prisma.checkins.aggregate({
                     where: { session_id: sessionId },
@@ -333,8 +447,10 @@ export const StatsModel = {
                     select: {
                         id: true,
                         name: true,
+                        status: true,
                         scheduled_start: true,
                         checkins: {
+                            where: { status: 'approved' },
                             select: { id: true, student_id: true }
                         }
                     }
@@ -347,6 +463,7 @@ export const StatsModel = {
             const sessionsData = sessions.map(s => ({
                 session_id: s.id,
                 name: s.name,
+                status: s.status,
                 date: s.scheduled_start,
                 checked_in: s.checkins.length,
                 enrolled: totalEnrolled,
@@ -354,6 +471,7 @@ export const StatsModel = {
             }));
 
             const totalSessions = sessions.length;
+            const totalCheckins = sessionsData.reduce((acc, s) => acc + (s.checked_in || 0), 0);
             const overallAttendanceRate = totalSessions > 0
                 ? sessionsData.reduce((acc, s) => acc + s.attendance_rate, 0) / totalSessions
                 : 0;
@@ -381,7 +499,8 @@ export const StatsModel = {
                     const attendedSessions = await prisma.checkins.findMany({
                         where: {
                             student_id: e.student_id,
-                            sessions: { course_id: courseId }
+                            sessions: { course_id: courseId },
+                            status: 'approved'
                         },
                         select: { session_id: true, risk_score: true }
                     });
@@ -416,6 +535,8 @@ export const StatsModel = {
                 course_name: course.name,
                 total_sessions: totalSessions,
                 total_enrolled: totalEnrolled,
+                total_checkins: totalCheckins,
+                total_checked_in: totalCheckins,
                 overall_attendance_rate: overallAttendanceRate,
                 average_attendance_rate: overallAttendanceRate,
                 flagged_checkins: flaggedCheckins,
@@ -464,7 +585,8 @@ export const StatsModel = {
                     const attended = await prisma.checkins.findMany({
                         where: {
                             student_id: studentId,
-                            sessions: { course_id: e.course_id }
+                            sessions: { course_id: e.course_id },
+                            status: 'approved'
                         },
                         select: { session_id: true, risk_score: true }
                     });

@@ -175,12 +175,29 @@ export const EnrollmentModel = {
                 where: {
                     student_id: studentId,
                     course_id: courseId,
-                    is_active: true
                 }
             });
 
             if (existingEnrollment) {
-                throw new BadRequestError('Student is already enrolled in this course');
+                if (existingEnrollment.is_active) {
+                    throw new BadRequestError('Student is already enrolled in this course');
+                }
+
+                return await prisma.enrollments.update({
+                    where: { id: existingEnrollment.id },
+                    data: {
+                        is_active: true,
+                        dropped_at: null,
+                        enrolled_at: new Date(),
+                    },
+                    select: {
+                        id: true,
+                        student_id: true,
+                        course_id: true,
+                        is_active: true,
+                        enrolled_at: true
+                    }
+                });
             }
 
             return await prisma.enrollments.create({
@@ -270,28 +287,52 @@ export const EnrollmentModel = {
                     not_found++;
                 });
 
-                // Check existing enrollments
+                // Check existing enrollments (active + inactive) so we can reactivate inactive rows.
                 const existingEnrollments = await tx.enrollments.findMany({
                     where: {
                         course_id: courseId,
-                        is_active: true,
                         users: {
                             email: { in: validEmails }
                         }
                     },
                     select: {
+                        id: true,
+                        is_active: true,
                         users: { select: { email: true } }
                     }
                 });
 
                 const alreadyEnrolledEmails = new Set(
-                    existingEnrollments.map(e => e.users?.email).filter(Boolean)
+                    existingEnrollments.filter(e => e.is_active).map(e => e.users?.email).filter(Boolean)
+                );
+                const inactiveEnrollmentRows = existingEnrollments.filter(e => !e.is_active);
+                const reactivatedEmails = new Set(
+                    inactiveEnrollmentRows.map(e => e.users?.email).filter(Boolean)
                 );
 
-                const emailsToEnroll = validEmails.filter(email => !alreadyEnrolledEmails.has(email));
+                const emailsToEnroll = validEmails.filter(
+                    email => !alreadyEnrolledEmails.has(email) && !reactivatedEmails.has(email)
+                );
 
                 // Enroll students
                 let enrolled = 0;
+                if (inactiveEnrollmentRows.length > 0) {
+                    for (const row of inactiveEnrollmentRows) {
+                        await tx.enrollments.update({
+                            where: { id: row.id },
+                            data: {
+                                is_active: true,
+                                dropped_at: null,
+                                enrolled_at: new Date(),
+                            }
+                        });
+                        if (row.users?.email) {
+                            setDetail(row.users.email, 'enrolled');
+                        }
+                    }
+                    enrolled += inactiveEnrollmentRows.length;
+                }
+
                 if (emailsToEnroll.length > 0) {
                     const usersToEnroll = validUsers.filter(u => emailsToEnroll.includes(u.email));
 
@@ -306,7 +347,7 @@ export const EnrollmentModel = {
                         skipDuplicates: true
                     });
 
-                    enrolled = usersToEnroll.length;
+                    enrolled += usersToEnroll.length;
                     usersToEnroll.forEach(u => {
                         setDetail(u.email, 'enrolled');
                     });
